@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>LiteTube floating player</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  #p,#p iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}
+</style>
+</head>
+<body>
+<div id="p"></div>
+<script>
+(() => {
+  'use strict';
+  const q = new URLSearchParams(location.search);
+  const id = q.get('id');
+  const start = +q.get('t') || 0;
+  const rate = +q.get('r') || 1;
+  const vol = q.has('v') ? +q.get('v') : 100;
+  const muted = q.get('m') === '1';
+  const autoplay = q.get('ap') !== '0';
+
+  let pl = null, rateSet = false, timer = null;
+
+  // Report the current time to the main page every second (the main page
+  // uses it to resume where you left off when the floating window closes).
+  function report() {
+    if (!pl || !pl.getCurrentTime) return;
+    try {
+      parent.postMessage({
+        type: 'lt-pip',
+        t: pl.getCurrentTime(),
+        playing: pl.getPlayerState() === 1,
+        rate: pl.getPlaybackRate()
+      }, '*');
+    } catch (e) {}
+  }
+
+  window.onYouTubeIframeAPIReady = () => {
+    pl = new YT.Player('p', {
+      host: 'https://www.youtube-nocookie.com',
+      width: '100%', height: '100%', videoId: id,
+      playerVars: {
+        autoplay: autoplay ? 1 : 0, start: start, controls: 1, fs: 0, rel: 0,
+        modestbranding: 1, playsinline: 1, enablejsapi: 1, origin: location.origin
+      },
+      events: {
+        onReady(e) {
+          e.target.setVolume(vol);
+          if (muted) e.target.mute();
+          timer = setInterval(report, 1000);
+        },
+        onStateChange(e) {
+          if (e.data === 1 && !rateSet) { rateSet = true; e.target.setPlaybackRate(rate); }
+          report();
+        },
+        onPlaybackRateChange: report
+      }
+    });
+  };
+
+  const s = document.createElement('script');
+  s.src = 'https://www.youtube.com/iframe_api';
+  s.async = true;
+  document.head.appendChild(s);
+
+  addEventListener('pagehide', () => { clearInterval(timer); report(); });
+})();
+</script>
+</body>
+</html>
