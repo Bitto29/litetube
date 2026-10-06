@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0f0f0f">
+<title>LiteTube</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23ff0033'/%3E%3Cpath d='M9 6.5v11l9-5.5z' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <a class="logo" href="./">LiteTube</a>
+  <form id="urlForm" class="search" autocomplete="off">
+    <input id="urlInput" type="text" inputmode="url" spellcheck="false"
+           placeholder="Paste a YouTube link (watch, youtu.be, shorts, live, playlist)"
+           aria-label="YouTube link">
+    <button type="submit">Play</button>
+  </form>
+</header>
+
+<main>
+  <div id="empty" class="empty">
+    <h1>Watch YouTube without the weight</h1>
+    <p>Paste a link above. The page loads nothing else until you press Play.</p>
+    <p id="fileWarn" class="warn" hidden>
+      This page was opened from a file. YouTube refuses to play in that case.
+      Host it (GitHub Pages, Vercel, Cloudflare Pages) or run a local server.
+    </p>
+  </div>
+
+  <section id="stage" class="stage" hidden>
+    <div class="slot">
+      <div id="player" class="player">
+        <div id="ytMount"></div>
+        <div id="shield" class="shield"></div>
+
+        <div class="bigplay" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+        <div id="bufBadge" class="buf">Buffering...</div>
+        <div id="msg" class="msg" hidden></div>
+
+        <div class="pip-notice">
+          <p>Playing in a floating window</p>
+          <button id="pipBack" type="button">Bring back here</button>
+        </div>
+
+        <div id="controls" class="controls">
+          <input id="seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Seek">
+          <div class="row">
+            <button id="btnPrev" class="btn" type="button" hidden title="Previous (playlist)"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg></button>
+            <button id="btnPlay" class="btn" type="button" title="Play / Pause (k)"><svg viewBox="0 0 24 24"><path d=""/></svg></button>
+            <button id="btnNext" class="btn" type="button" hidden title="Next (playlist)"><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></button>
+            <button id="btnMute" class="btn" type="button" title="Mute (m)"><svg viewBox="0 0 24 24"><path d=""/></svg></button>
+            <input id="vol" type="range" min="0" max="100" step="1" value="100" aria-label="Volume">
+            <span id="time" class="time">0:00 / 0:00</span>
+            <span class="spacer"></span>
+            <select id="speed" title="Speed (&lt; &gt;)" aria-label="Speed"></select>
+            <select id="quality" title="Quality" aria-label="Quality"></select>
+            <button id="btnLoop" class="btn" type="button" title="Loop (r)"><svg viewBox="0 0 24 24"><path d=""/></svg></button>
+            <button id="btnPip" class="btn" type="button" title="Floating window (i)"><svg viewBox="0 0 24 24"><path d=""/></svg></button>
+            <button id="btnTheater" class="btn" type="button" title="Theater mode (t)"><svg viewBox="0 0 24 24"><path d=""/></svg></button>
+            <button id="btnFull" class="btn" type="button" title="Fullscreen (f)"><svg viewBox="0 0 24 24"><path d=""/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info">
+      <h2 id="title"></h2>
+      <span id="badge" class="badge"></span>
+    </div>
+
+    <details class="keys">
+      <summary>Keyboard shortcuts</summary>
+      <ul>
+        <li><kbd>Space</kbd> / <kbd>K</kbd> play or pause</li>
+        <li><kbd>&larr;</kbd> <kbd>&rarr;</kbd> 5 seconds, <kbd>J</kbd> <kbd>L</kbd> 10 seconds</li>
+        <li><kbd>&uarr;</kbd> <kbd>&darr;</kbd> volume, <kbd>M</kbd> mute</li>
+        <li><kbd>0</kbd>-<kbd>9</kbd> jump to 0-90%, <kbd>Home</kbd> <kbd>End</kbd></li>
+        <li><kbd>&lt;</kbd> <kbd>&gt;</kbd> speed, <kbd>R</kbd> loop</li>
+        <li><kbd>F</kbd> fullscreen, <kbd>T</kbd> theater, <kbd>I</kbd> floating window</li>
+      </ul>
+    </details>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" hidden></div>
+
+<noscript><p class="warn" style="padding:16px">JavaScript is required.</p></noscript>
+<script src="app.js" defer></script>
+</body>
+</html>
