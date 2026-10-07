@@ -12,7 +12,8 @@ const els = {
   mute: $('btnMute'), vol: $('vol'), time: $('time'), speed: $('speed'),
   quality: $('quality'), loop: $('btnLoop'), pip: $('btnPip'),
   theater: $('btnTheater'), full: $('btnFull'), title: $('title'),
-  toast: $('toast'), badge: $('badge'), fileWarn: $('fileWarn')
+  toast: $('toast'), badge: $('badge'), fileWarn: $('fileWarn'),
+  save: $('btnSave'), savedList: $('savedList'), savedEmpty: $('savedEmpty'), savedCount: $('savedCount')
 };
 
 const store = {
@@ -110,7 +111,7 @@ function loadAPI() {
 /* ------------------------------------------------------------------ *
  *  State
  * ------------------------------------------------------------------ */
-const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const SPEEDS = [0.25, 0.5, 0.75, 0.85, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3];
 const QL = { hd2160: '2160p', hd1440: '1440p', hd1080: '1080p', hd720: '720p', large: '480p', medium: '360p', small: '240p', tiny: '144p' };
 const DEFAULT_LEVELS = ['hd1080', 'hd720', 'large', 'medium', 'small', 'tiny'];
 
@@ -135,6 +136,7 @@ async function play(raw) {
 
   endPip(false);
   current = info;
+  syncSave();
   store.set('url', raw.trim());
   syncAddressBar(info);
 
@@ -348,7 +350,19 @@ function setSpeed(r) {
   rate = r;
   store.set('rate', r);
   els.speed.value = String(r);
-  if (ready) player.setPlaybackRate(r);
+  if (!ready) return;
+  player.setPlaybackRate(r);
+  // YouTube may clamp embedded playback (usually to 2x). Check what it really applied.
+  setTimeout(() => {
+    if (!ready || rate !== r) return;
+    const got = player.getPlaybackRate();
+    if (got && got !== r) {
+      rate = got;
+      store.set('rate', got);
+      els.speed.value = String(got);
+      toast('YouTube limits embedded video to ' + got + 'x');
+    }
+  }, 500);
 }
 function stepSpeed(dir) {
   const i = SPEEDS.indexOf(rate);
@@ -490,6 +504,118 @@ function endPip(restore) {
 /* ------------------------------------------------------------------ *
  *  Wire up controls
  * ------------------------------------------------------------------ */
+/* ---------- Saved links (kept in this browser's localStorage) ---------- */
+let saved = store.get('saved', []);
+
+function currentKey() {
+  if (!current) return null;
+  return current.id ? current.id : 'list:' + current.list;
+}
+
+function syncSave() {
+  const on = saved.some(s => s.k === currentKey());
+  els.save.textContent = on ? 'Saved' : 'Save';
+  els.save.classList.toggle('active', on);
+}
+
+function persistSaved() {
+  store.set('saved', saved);
+  renderLibrary();
+  syncSave();
+}
+
+function toggleSave() {
+  const k = currentKey();
+  if (!k) { toast('Play a video first.'); return; }
+
+  const i = saved.findIndex(s => s.k === k);
+  if (i >= 0) {
+    saved.splice(i, 1);
+    persistSaved();
+    toast('Removed from saved links');
+    return;
+  }
+
+  const data = (ready && player.getVideoData) ? player.getVideoData() : {};
+  const t = ready ? Math.floor(player.getCurrentTime() || 0) : 0;
+  const base = data.title || (current.id ? current.id : 'Playlist');
+  saved.unshift({
+    k,
+    id: current.id,
+    list: current.list,
+    title: current.id ? base : 'Playlist: ' + base,
+    t: t > 5 ? t : 0,          // remember where you were, unless it is the very start
+    at: Date.now()
+  });
+  persistSaved();
+  toast('Saved');
+}
+
+function renderLibrary() {
+  els.savedList.textContent = '';
+  els.savedCount.textContent = saved.length ? '(' + saved.length + ')' : '';
+  els.savedEmpty.hidden = saved.length > 0;
+
+  const frag = document.createDocumentFragment();
+  saved.forEach(item => {
+    const li = document.createElement('li');
+    li.dataset.k = item.k;
+
+    const play = document.createElement('button');
+    play.type = 'button';
+    play.className = 'saved-play';
+    play.title = 'Play';
+
+    const title = document.createElement('span');
+    title.className = 'saved-title';
+    title.textContent = item.title;
+
+    const meta = document.createElement('span');
+    meta.className = 'saved-meta';
+    meta.textContent = item.t ? 'from ' + fmt(item.t) : '';
+
+    play.append(title, meta);
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'saved-del';
+    del.title = 'Remove';
+    del.setAttribute('aria-label', 'Remove ' + item.title);
+    del.textContent = '\u00d7';
+
+    li.append(play, del);
+    frag.appendChild(li);
+  });
+  els.savedList.appendChild(frag);
+}
+
+function playSaved(item) {
+  const url = item.id
+    ? 'https://youtu.be/' + item.id + (item.t ? '?t=' + item.t : '')
+    : 'https://www.youtube.com/playlist?list=' + item.list;
+  els.input.value = url;
+  window.scrollTo(0, 0);
+  play(url);
+}
+
+els.save.addEventListener('click', toggleSave);
+els.savedList.addEventListener('click', e => {
+  const li = e.target.closest('li');
+  if (!li) return;
+  const item = saved.find(s => s.k === li.dataset.k);
+  if (!item) return;
+  if (e.target.closest('.saved-del')) {
+    saved = saved.filter(s => s.k !== item.k);
+    persistSaved();
+  } else if (e.target.closest('.saved-play')) {
+    playSaved(item);
+  }
+});
+// Keep other open tabs in sync
+window.addEventListener('storage', e => {
+  if (e.key === 'lt_saved') { saved = store.get('saved', []); renderLibrary(); syncSave(); }
+});
+
 els.form.addEventListener('submit', e => { e.preventDefault(); play(els.input.value); });
 els.input.addEventListener('paste', () => setTimeout(() => play(els.input.value), 0));
 
@@ -556,6 +682,7 @@ document.addEventListener('keydown', e => {
     case 't': case 'T': toggleTheater(); break;
     case 'i': case 'I': togglePip(); break;
     case 'r': case 'R': toggleLoop(); break;
+    case 's': case 'S': toggleSave(); break;
     case '<': stepSpeed(-1); break;
     case '>': stepSpeed(1); break;
     case 'Home': seekTo(0); break;
@@ -579,6 +706,7 @@ document.addEventListener('keydown', e => {
   setIcon(els.theater, 'theater');
   els.loop.classList.toggle('active', loop);
   els.vol.value = muted ? 0 : volume;
+  renderLibrary();
 
   SPEEDS.forEach(s => {
     const o = document.createElement('option');
