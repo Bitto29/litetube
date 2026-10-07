@@ -71,6 +71,7 @@
     <div class="info">
       <h2 id="title"></h2>
       <span id="badge" class="badge"></span>
+      <button id="btnSave" class="save" type="button" title="Save this link (s)">Save</button>
     </div>
 
     <details class="keys">
@@ -82,8 +83,15 @@
         <li><kbd>0</kbd>-<kbd>9</kbd> jump to 0-90%, <kbd>Home</kbd> <kbd>End</kbd></li>
         <li><kbd>&lt;</kbd> <kbd>&gt;</kbd> speed, <kbd>R</kbd> loop</li>
         <li><kbd>F</kbd> fullscreen, <kbd>T</kbd> theater, <kbd>I</kbd> floating window</li>
+        <li><kbd>S</kbd> save or unsave this link</li>
       </ul>
     </details>
+  </section>
+
+  <section id="library" class="library">
+    <h3>Saved links <span id="savedCount"></span></h3>
+    <p id="savedEmpty" class="saved-empty">Nothing saved yet. Press Save under a video and it will appear here.</p>
+    <ul id="savedList" class="saved-list"></ul>
   </section>
 </main>
 
