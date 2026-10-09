@@ -128,6 +128,50 @@ let loop = store.get('loop', false);
 const isPlaylist = () => !!(current && !current.id && current.list);
 
 /* ------------------------------------------------------------------ *
+ *  Resume playback: remember where you stopped, per video
+ * ------------------------------------------------------------------ */
+const MAX_POS = 200;          // keep at most this many videos
+const MIN_RESUME = 5;         // don't bother under 5 seconds
+const END_MARGIN = 10;        // finished if within 10 seconds of the end
+let positions = store.get('pos', {});
+let saveTimer = null, lastPipSave = 0;
+
+function writePos(id, t, dur) {
+  if (!id || !isFinite(t)) return;
+  t = Math.floor(t); dur = Math.floor(dur || 0);
+  const finished = dur > 0 && (t >= dur - END_MARGIN || t / dur > 0.97);
+  if (t < MIN_RESUME || finished) {
+    if (positions[id]) { delete positions[id]; store.set('pos', positions); }
+    return;
+  }
+  positions[id] = { t, d: dur, at: Date.now() };
+  const keys = Object.keys(positions);
+  if (keys.length > MAX_POS) {
+    keys.sort((a, b) => positions[a].at - positions[b].at)
+        .slice(0, keys.length - MAX_POS)
+        .forEach(k => delete positions[k]);
+  }
+  store.set('pos', positions);
+}
+
+function savePos() {
+  if (!ready || pipWin || !player.getVideoData) return;
+  if (state !== 1 && state !== 2) return;          // only while playing or paused
+  const data = player.getVideoData();
+  if (!data || !data.video_id || data.isLive) return;
+  writePos(data.video_id, player.getCurrentTime(), player.getDuration());
+}
+
+function startSaveTimer() { if (!saveTimer) saveTimer = setInterval(savePos, 5000); }
+function stopSaveTimer() { clearInterval(saveTimer); saveTimer = null; }
+
+function resumePoint(info) {
+  if (!info.id || info.start) return 0;            // playlists and explicit ?t= links win
+  const p = positions[info.id];
+  return p && p.t >= MIN_RESUME ? p.t : 0;
+}
+
+/* ------------------------------------------------------------------ *
  *  Load / play a link
  * ------------------------------------------------------------------ */
 async function play(raw) {
@@ -147,16 +191,21 @@ async function play(raw) {
 
   try { await loadAPI(); } catch (e) { showMsg(e.message); return; }
 
+  savePos();                                       // keep the position of the video we are leaving
+  const resumeAt = resumePoint(info);
+  const startInfo = resumeAt ? Object.assign({}, info, { start: resumeAt }) : info;
+  if (resumeAt) toast('Resuming from ' + fmt(resumeAt));
+
   if (player) {
-    if (!ready) { pending = info; return; }
-    loadInto(info);
+    if (!ready) { pending = startInfo; return; }
+    loadInto(startInfo);
     return;
   }
 
   const playerVars = {
     autoplay: 1, controls: 0, disablekb: 1, fs: 0, rel: 0, modestbranding: 1,
     playsinline: 1, iv_load_policy: 3, enablejsapi: 1, origin: location.origin,
-    start: info.start
+    start: startInfo.start
   };
   const opts = {
     host: 'https://www.youtube-nocookie.com',
@@ -206,12 +255,20 @@ function onState(e) {
 
   if (state === 1) {
     startTick();
+    startSaveTimer();
     onNewVideoIfAny();
     wake();
   } else {
     stopTick();
     updateProgress(true);
     cl.add('show-ui');
+    if (state === 2) savePos();
+    if (state !== 3) stopSaveTimer();              // keep the timer through buffering
+  }
+
+  if (state === 0 && player.getVideoData) {        // finished: forget it
+    const d = player.getVideoData();
+    if (d && d.video_id && positions[d.video_id]) { delete positions[d.video_id]; store.set('pos', positions); }
   }
 
   if (state === 0 && loop && current && current.id) {
@@ -297,9 +354,12 @@ function startTick() { if (!tick && !document.hidden) tick = setInterval(updateP
 function stopTick() { clearInterval(tick); tick = null; }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) stopTick();
+  if (document.hidden) { stopTick(); savePos(); }
   else if (state === 1) { startTick(); updateProgress(true); }
 });
+
+window.addEventListener('pagehide', savePos);
+window.addEventListener('beforeunload', savePos);
 
 /* ------------------------------------------------------------------ *
  *  Actions
@@ -422,7 +482,7 @@ els.player.addEventListener('mouseleave', () => { if (state === 1) els.player.cl
  *  Fallback elsewhere: an in-page mini player
  * ------------------------------------------------------------------ */
 const hasDocPip = 'documentPictureInPicture' in window;
-let pipWin = null, pipFrame = null, pipTime = 0, pipPlaying = false;
+let pipWin = null, pipFrame = null, pipTime = 0, pipPlaying = false, pipVid = null;
 
 async function togglePip() {
   if (pipWin) { endPip(true); return; }
@@ -437,6 +497,8 @@ async function togglePip() {
   const vid = player.getVideoData().video_id;
   if (!vid) return;
 
+  savePos();
+  pipVid = vid;
   pipTime = player.getCurrentTime() || 0;
   pipPlaying = state === 1;
 
@@ -477,6 +539,10 @@ function onPipMessage(e) {
   if (!d || d.type !== 'lt-pip') return;
   pipTime = d.t;
   pipPlaying = d.playing;
+  if (pipVid && Date.now() - lastPipSave > 5000) {
+    lastPipSave = Date.now();
+    writePos(pipVid, pipTime, ready && player.getDuration ? player.getDuration() : 0);
+  }
   if (d.rate && d.rate !== rate) { rate = d.rate; store.set('rate', rate); els.speed.value = String(rate); }
 }
 const onPipHide = () => endPip(true);
@@ -494,6 +560,9 @@ function endPip(restore) {
   try { w.close(); } catch {}
   document.body.classList.remove('in-pip');
   els.pip.classList.remove('active');
+
+  if (pipVid) writePos(pipVid, pipTime, ready && player.getDuration ? player.getDuration() : 0);
+  pipVid = null;
 
   if (restore && ready) {
     player.seekTo(pipTime, true);
