@@ -275,12 +275,14 @@ function onState(e) {
     player.seekTo(0, true);
     player.playVideo();
   }
+  else if (state === 0 && queue) playNext();
 }
 
 function onNewVideoIfAny() {
   const data = player.getVideoData ? player.getVideoData() : null;
   if (!data || data.video_id === lastVid) return;
   lastVid = data.video_id;
+  onVideoChanged();
   player.setPlaybackRate(rate);
   applyQuality();
   const levels = player.getAvailableQualityLevels && player.getAvailableQualityLevels();
@@ -571,10 +573,371 @@ function endPip(restore) {
 }
 
 /* ------------------------------------------------------------------ *
+ *  Description and comments (only fetched when you press the button)
+ *  Works with no account: public Invidious servers. A YouTube API key is optional.
+ * ------------------------------------------------------------------ */
+const API_KEY = '';   // optional: paste a key here, or enter it in the page (kept in this browser)
+const getKey = () => API_KEY || store.get('apikey', '');
+
+const D = { btn: $('btnDesc'), box: $('descBox'), status: $('descStatus'), body: $('descBody') };
+const C = { btn: $('btnCom'), box: $('comBox'), status: $('comStatus'), head: $('comHead'),
+            sort: $('comSort'), list: $('comList'), more: $('comMore') };
+
+const API_ERR = {
+  commentsDisabled: 'Comments are turned off for this video.',
+  quotaExceeded: 'The daily YouTube API quota is used up. Try again tomorrow.',
+  videoNotFound: 'Video not found.',
+  keyInvalid: 'The API key is invalid.',
+  ipRefererBlocked: 'This API key does not allow requests from this website.',
+  accessNotConfigured: 'YouTube Data API v3 is not enabled for this key.',
+  forbidden: 'YouTube refused this request.'
+};
+
+async function yt(path, params) {
+  const qs = new URLSearchParams(Object.assign({ key: getKey() }, params));
+  let res;
+  try { res = await fetch('https://www.googleapis.com/youtube/v3/' + path + '?' + qs); }
+  catch { throw new Error('Could not reach YouTube. Check your connection.'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const e = data.error || {};
+    const reason = (e.errors && e.errors[0] && e.errors[0].reason) || '';
+    const err = new Error(API_ERR[reason] || e.message || ('YouTube API error ' + res.status));
+    err.badKey = /keyInvalid|ipRefererBlocked|accessNotConfigured/.test(reason) || /API key/i.test(e.message || '');
+    throw err;
+  }
+  return data;
+}
+
+const curVid = () => {
+  const d = ready && player.getVideoData ? player.getVideoData() : null;
+  return (d && d.video_id) || null;
+};
+
+function chipBtn(text, onClick) {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'chip'; b.textContent = text;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function keyForm(el, retry) {
+  el.textContent = '';
+  const p = document.createElement('p');
+  p.textContent = 'Optional: paste a free YouTube Data API key for more reliable loading. It is stored only in this browser.';
+  const row = document.createElement('div');
+  row.className = 'key-row';
+  const inp = document.createElement('input');
+  inp.type = 'text'; inp.placeholder = 'AIza...'; inp.spellcheck = false;
+  inp.autocomplete = 'off'; inp.setAttribute('aria-label', 'YouTube API key');
+  const ok = chipBtn('Save key', () => {
+    const v = inp.value.trim();
+    if (!v) return;
+    store.set('apikey', v);
+    el.textContent = '';
+    retry();
+  });
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') ok.click(); });
+  row.append(inp, ok);
+  const help = document.createElement('a');
+  help.href = 'https://developers.google.com/youtube/v3/getting-started';
+  help.target = '_blank'; help.rel = 'noopener';
+  help.textContent = 'How to get a key';
+  el.append(p, row, help);
+}
+
+function fail(el, err, retry) {
+  el.textContent = '';
+  const p = document.createElement('p');
+  p.textContent = err.message;
+  el.appendChild(p);
+  if (err.badKey) el.appendChild(chipBtn('Change API key', () => keyForm(el, retry)));
+  else if (err.canKey) el.appendChild(chipBtn('Use a YouTube API key instead', () => keyForm(el, retry)));
+}
+
+const tsToSec = s => s.split(':').reduce((a, n) => a * 60 + (+n), 0);
+
+// Plain text -> DOM, with clickable links and timestamps (no innerHTML).
+function richText(text, parent) {
+  const re = /(https?:\/\/[^\s<]+)|(\b\d{1,2}:\d{2}(?::\d{2})?\b)/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) parent.append(text.slice(last, m.index));
+    if (m[1]) {
+      let url = m[1], tail = '';
+      const t = url.match(/[.,;:!?)\]'"]+$/);
+      if (t) { tail = t[0]; url = url.slice(0, -tail.length); }
+      const a = document.createElement('a');
+      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer nofollow';
+      a.textContent = url;
+      parent.append(a);
+      if (tail) parent.append(tail);
+    } else {
+      const a = document.createElement('a');
+      a.href = '#'; a.className = 'ts'; a.dataset.t = tsToSec(m[2]); a.textContent = m[2];
+      parent.append(a);
+    }
+    last = re.lastIndex;
+  }
+  if (last < text.length) parent.append(text.slice(last));
+}
+
+function ago(iso) {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  const units = [['year', 31536000], ['month', 2592000], ['day', 86400], ['hour', 3600], ['minute', 60]];
+  for (const [name, v] of units) {
+    if (s >= v) { const k = Math.floor(s / v); return k + ' ' + name + (k > 1 ? 's' : '') + ' ago'; }
+  }
+  return 'just now';
+}
+
+// Click a timestamp in a description or comment to jump there.
+document.addEventListener('click', e => {
+  const a = e.target.closest && e.target.closest('a.ts');
+  if (!a) return;
+  e.preventDefault();
+  if (!ready) return;
+  seekTo(+a.dataset.t);
+  if (state !== 1) player.playVideo();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+/* ---------- Data sources ----------
+ * 1) YouTube Data API, only if you saved a key (most reliable)
+ * 2) Public Invidious servers, no key needed (best effort: servers are often busy)
+ * Both return the same shape, so the UI code below does not care which one ran. */
+async function infoGoogle(id) {
+  const r = await yt('videos', { part: 'snippet,statistics', id });
+  const it = r.items && r.items[0];
+  if (!it) throw new Error(API_ERR.videoNotFound);
+  return {
+    channel: it.snippet.channelTitle,
+    views: it.statistics && it.statistics.viewCount,
+    date: it.snippet.publishedAt ? new Date(it.snippet.publishedAt).getTime() : 0,
+    description: it.snippet.description || ''
+  };
+}
+
+async function commentsGoogle(id, sort, token) {
+  const p = { part: 'snippet', videoId: id, maxResults: 20, order: sort, textFormat: 'plainText' };
+  if (token) p.pageToken = token;
+  const r = await yt('commentThreads', p);
+  return {
+    items: (r.items || []).map(t => {
+      const c = t.snippet.topLevelComment.snippet;
+      return { author: c.authorDisplayName, text: c.textDisplay || '', likes: c.likeCount || 0,
+               age: ago(c.publishedAt), replies: t.snippet.totalReplyCount || 0 };
+    }),
+    next: r.nextPageToken || null
+  };
+}
+
+const FALLBACK_INV = ['https://inv.nadeko.net', 'https://yewtu.be'];
+let invList = null, invGood = null;
+
+function fetchT(url, ms) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  return fetch(url, { signal: ac.signal }).finally(() => clearTimeout(t));
+}
+
+async function invInstances() {
+  if (invList) return invList;
+  let list = [];
+  try {
+    const r = await fetchT('https://api.invidious.io/instances.json?sort_by=type,health', 6000);
+    const j = await r.json();
+    list = j.filter(x => x[1] && x[1].type === 'https' && x[1].api === true && x[1].cors === true)
+            .map(x => x[1].uri.replace(/\/$/, ''));
+  } catch {}
+  invList = list.concat(FALLBACK_INV.filter(u => !list.includes(u)));
+  return invList;
+}
+
+async function inv(path) {
+  const list = await invInstances();
+  const order = invGood ? [invGood].concat(list.filter(u => u !== invGood)) : list;
+  for (const base of order.slice(0, 6)) {
+    try {
+      const r = await fetchT(base + '/api/v1/' + path, 9000);
+      const data = await r.json().catch(() => null);
+      if (r.ok && data && !data.error) { invGood = base; return data; }
+      if (data && /comment/i.test(data.error || '') && /disabled/i.test(data.error || '')) {
+        throw Object.assign(new Error(API_ERR.commentsDisabled), { final: true });
+      }
+    } catch (e) { if (e.final) throw e; }
+  }
+  invGood = null;
+  throw Object.assign(new Error('The free public servers did not answer (they are often busy or blocked). Try again in a moment.'), { canKey: true });
+}
+
+async function infoInv(id) {
+  const d = await inv('videos/' + encodeURIComponent(id) + '?fields=title,description,author,viewCount,published');
+  return { channel: d.author, views: d.viewCount, date: d.published ? d.published * 1000 : 0, description: d.description || '' };
+}
+
+async function commentsInv(id, sort, token) {
+  const q = '?sort_by=' + (sort === 'time' ? 'new' : 'top') + (token ? '&continuation=' + encodeURIComponent(token) : '');
+  const d = await inv('comments/' + encodeURIComponent(id) + q);
+  return {
+    items: (d.comments || []).map(c => ({
+      author: c.author, text: c.content || '', likes: c.likeCount || 0,
+      age: c.published ? ago(new Date(c.published * 1000).toISOString()) : (c.publishedText || ''),
+      replies: (c.replies && c.replies.replyCount) || 0
+    })),
+    next: d.continuation || null
+  };
+}
+
+const getInfo = id => getKey() ? infoGoogle(id) : infoInv(id);
+const getComments = (id, sort, tok) => getKey() ? commentsGoogle(id, sort, tok) : commentsInv(id, sort, tok);
+
+/* ---------- Description ---------- */
+const infoCache = {};
+let dReq = 0;
+
+async function loadDesc() {
+  const my = ++dReq;
+  const id = curVid();
+  D.body.textContent = '';
+  if (!id) { D.status.textContent = 'Press Play on a video first.'; return; }
+
+  const cacheKey = (getKey() ? 'g:' : 'i:') + id;
+  let it = infoCache[cacheKey];
+  if (!it) {
+    D.status.textContent = 'Loading description...';
+    try {
+      it = await getInfo(id);
+      infoCache[cacheKey] = it;
+    } catch (e) { if (my === dReq) fail(D.status, e, loadDesc); return; }
+  }
+  if (my !== dReq) return;
+
+  D.status.textContent = '';
+  const meta = document.createElement('div');
+  meta.className = 'd-meta';
+  meta.textContent = [
+    it.channel,
+    it.views ? Number(it.views).toLocaleString() + ' views' : '',
+    it.date ? new Date(it.date).toLocaleDateString() : ''
+  ].filter(Boolean).join(' \u00b7 ');
+
+  const text = it.description || 'No description.';
+  const box = document.createElement('div');
+  box.className = 'd-text';
+  richText(text, box);
+  D.body.append(meta, box);
+
+  if (text.length > 300) {
+    box.classList.add('clamp');
+    const more = chipBtn('Show more', () => {
+      const open = box.classList.toggle('clamp');
+      more.textContent = open ? 'Show more' : 'Show less';
+    });
+    D.body.appendChild(more);
+  }
+}
+
+/* ---------- Comments ---------- */
+let cTok = null, cReq = 0;
+
+async function loadComments(reset) {
+  const my = ++cReq;
+  const id = curVid();
+  if (reset) {
+    C.list.textContent = '';
+    cTok = null;
+    C.more.hidden = true;
+    C.head.hidden = true;
+  }
+  if (!id) { C.status.textContent = 'Press Play on a video first.'; return; }
+
+  C.status.textContent = 'Loading comments...';
+  C.more.disabled = true;
+  try {
+    const r = await getComments(id, C.sort.value, cTok);
+    if (my !== cReq) return;
+
+    const frag = document.createDocumentFragment();
+    r.items.forEach(c => {
+      const li = document.createElement('li');
+
+      const head = document.createElement('div');
+      head.className = 'c-head';
+      const who = document.createElement('b');
+      who.textContent = c.author;
+      const when = document.createElement('span');
+      when.textContent = c.age;
+      head.append(who, when);
+
+      const body = document.createElement('div');
+      body.className = 'c-text';
+      richText(c.text, body);
+      li.append(head, body);
+
+      const bits = [];
+      if (c.likes) bits.push('\u2665 ' + c.likes.toLocaleString());
+      if (c.replies) bits.push(c.replies + (c.replies > 1 ? ' replies' : ' reply'));
+      if (bits.length) {
+        const foot = document.createElement('div');
+        foot.className = 'c-foot';
+        foot.textContent = bits.join(' \u00b7 ');
+        li.appendChild(foot);
+      }
+      frag.appendChild(li);
+    });
+    C.list.appendChild(frag);
+
+    cTok = r.next;
+    C.more.hidden = !cTok;
+    C.head.hidden = false;
+    C.status.textContent = C.list.children.length ? '' : 'No comments yet.';
+  } catch (e) {
+    if (my === cReq) fail(C.status, e, () => loadComments(true));
+  } finally {
+    if (my === cReq) C.more.disabled = false;
+  }
+}
+
+function togglePanel(P, load) {
+  const on = P.box.hidden;
+  P.box.hidden = !on;
+  P.btn.classList.toggle('active', on);
+  P.btn.setAttribute('aria-expanded', String(on));
+  if (on) load();
+}
+D.btn.addEventListener('click', () => togglePanel(D, loadDesc));
+C.btn.addEventListener('click', () => togglePanel(C, () => loadComments(true)));
+C.more.addEventListener('click', () => loadComments(false));
+C.sort.addEventListener('change', () => loadComments(true));
+
+// When the video changes, refresh only the panels you have open.
+function onVideoChanged() {
+  if (!D.box.hidden) loadDesc();
+  if (!C.box.hidden) loadComments(true);
+}
+
+/* ------------------------------------------------------------------ *
  *  Wire up controls
  * ------------------------------------------------------------------ */
-/* ---------- Saved links (kept in this browser's localStorage) ---------- */
+/* ---------- Saved links with folders (kept in this browser's localStorage) ---------- */
+const tabsEl = $('tabs'), folderTools = $('folderTools'), saveSel = $('saveFolder');
+
 let saved = store.get('saved', []);
+let folders = store.get('folders', []);
+let view = store.get('view', 'all');       // 'all' | 'none' | a folder id
+let saveTo = store.get('saveTo', '');      // folder that new saves go into ('' = none)
+let queue = null;                          // { f } while a folder plays in order
+
+const folderOf = it => it.f || null;
+const hasFolder = id => folders.some(f => f.id === id);
+
+function normalize() {
+  saved.forEach(s => { if (s.f && !hasFolder(s.f)) s.f = null; });
+  if (view !== 'all' && view !== 'none' && !hasFolder(view)) view = 'all';
+  if (saveTo && !hasFolder(saveTo)) saveTo = '';
+}
+normalize();
 
 function currentKey() {
   if (!current) return null;
@@ -592,6 +955,12 @@ function persistSaved() {
   renderLibrary();
   syncSave();
 }
+function persistFolders() {
+  store.set('folders', folders);
+  store.set('view', view);
+  store.set('saveTo', saveTo);
+  renderLibrary();
+}
 
 function toggleSave() {
   const k = currentKey();
@@ -608,25 +977,73 @@ function toggleSave() {
   const data = (ready && player.getVideoData) ? player.getVideoData() : {};
   const t = ready ? Math.floor(player.getCurrentTime() || 0) : 0;
   const base = data.title || (current.id ? current.id : 'Playlist');
-  saved.unshift({
+  const item = {
     k,
     id: current.id,
     list: current.list,
     title: current.id ? base : 'Playlist: ' + base,
     t: t > 5 ? t : 0,          // remember where you were, unless it is the very start
+    f: saveTo || null,
     at: Date.now()
-  });
+  };
+  // Folders keep the order you saved in (new ones go last); unsorted shows newest first.
+  if (item.f) saved.push(item); else saved.unshift(item);
   persistSaved();
-  toast('Saved');
+  toast(item.f ? 'Saved to ' + folders.find(f => f.id === item.f).name : 'Saved');
 }
 
-function renderLibrary() {
-  els.savedList.textContent = '';
-  els.savedCount.textContent = saved.length ? '(' + saved.length + ')' : '';
-  els.savedEmpty.hidden = saved.length > 0;
+/* ----- tabs + "save into" menu ----- */
+function renderTabs() {
+  const counts = { none: 0 };
+  folders.forEach(f => { counts[f.id] = 0; });
+  saved.forEach(s => { counts[s.f || 'none']++; });
 
   const frag = document.createDocumentFragment();
-  saved.forEach(item => {
+  const add = (v, label, n) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip tab' + (v === view ? ' active' : '');
+    b.dataset.v = v;
+    b.textContent = n == null ? label : label + ' (' + n + ')';
+    frag.appendChild(b);
+  };
+  add('all', 'All', saved.length);
+  add('none', 'Unsorted', counts.none);
+  folders.forEach(f => add(f.id, f.name, counts[f.id]));
+  add('+', '+ New folder');
+  tabsEl.textContent = '';
+  tabsEl.appendChild(frag);
+
+  saveSel.textContent = '';
+  const o = (v, t) => { const e = document.createElement('option'); e.value = v; e.textContent = t; saveSel.appendChild(e); };
+  o('', 'No folder');
+  folders.forEach(f => o(f.id, f.name));
+  saveSel.value = saveTo;
+}
+
+/* ----- the list (only the open tab is drawn, so it stays light) ----- */
+function renderLibrary() {
+  renderTabs();
+  const items = saved.filter(s => view === 'all' || (view === 'none' ? !s.f : s.f === view));
+  const ordered = view !== 'all';
+
+  els.savedCount.textContent = saved.length ? '(' + saved.length + ')' : '';
+  els.savedEmpty.textContent = saved.length
+    ? 'Nothing in this tab yet.'
+    : 'Nothing saved yet. Press Save under a video and it will appear here.';
+  els.savedEmpty.hidden = items.length > 0;
+  folderTools.hidden = !hasFolder(view);
+  els.savedList.textContent = '';
+
+  const mk = (cls, text, label) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = cls; b.textContent = text;
+    b.title = label; b.setAttribute('aria-label', label);
+    return b;
+  };
+
+  const frag = document.createDocumentFragment();
+  items.forEach((item, i) => {
     const li = document.createElement('li');
     li.dataset.k = item.k;
 
@@ -635,39 +1052,147 @@ function renderLibrary() {
     play.className = 'saved-play';
     play.title = 'Play';
 
+    if (ordered) {
+      const n = document.createElement('span');
+      n.className = 'saved-n';
+      n.textContent = i + 1;
+      play.appendChild(n);
+    }
+
     const title = document.createElement('span');
     title.className = 'saved-title';
     title.textContent = item.title;
 
     const meta = document.createElement('span');
     meta.className = 'saved-meta';
-    meta.textContent = item.t ? 'from ' + fmt(item.t) : '';
+    const bits = [];
+    if (!ordered && item.f) bits.push(folders.find(f => f.id === item.f).name);
+    if (item.t) bits.push('from ' + fmt(item.t));
+    meta.textContent = bits.join(' \u00b7 ');
 
     play.append(title, meta);
+    li.appendChild(play);
 
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.className = 'saved-del';
-    del.title = 'Remove';
-    del.setAttribute('aria-label', 'Remove ' + item.title);
-    del.textContent = '\u00d7';
-
-    li.append(play, del);
+    if (ordered) {
+      const up = mk('saved-btn saved-up', '\u25b2', 'Move up');
+      const dn = mk('saved-btn saved-down', '\u25bc', 'Move down');
+      up.disabled = i === 0;
+      dn.disabled = i === items.length - 1;
+      li.append(up, dn);
+    }
+    li.append(
+      mk('saved-btn saved-move', 'Move', 'Move to a folder'),
+      mk('saved-btn saved-del', '\u00d7', 'Remove')
+    );
     frag.appendChild(li);
   });
   els.savedList.appendChild(frag);
 }
 
-function playSaved(item) {
+function playSaved(item, fromQueue) {
+  // Prefer the position you really reached over the one stored when you saved it.
+  const withT = item.id && item.t && !fromQueue && !positions[item.id];
   const url = item.id
-    ? 'https://youtu.be/' + item.id + (item.t ? '?t=' + item.t : '')
+    ? 'https://youtu.be/' + item.id + (withT ? '?t=' + item.t : '')
     : 'https://www.youtube.com/playlist?list=' + item.list;
   els.input.value = url;
   window.scrollTo(0, 0);
   play(url);
 }
 
+// When a video in a folder ends, play the next one in number order.
+function playNext() {
+  if (!queue) return;
+  const list = saved.filter(s => folderOf(s) === queue.f);
+  const i = list.findIndex(s => s.k === currentKey());
+  if (i < 0) { queue = null; return; }
+  if (i === list.length - 1) { queue = null; toast('End of the folder'); return; }
+  toast('Next: ' + list[i + 1].title);
+  playSaved(list[i + 1], true);
+}
+
+function reorder(item, dir) {
+  const i = saved.indexOf(item);
+  let j = i + dir;
+  while (j >= 0 && j < saved.length && folderOf(saved[j]) !== folderOf(item)) j += dir;
+  if (j < 0 || j >= saved.length) return;
+  saved[i] = saved[j];
+  saved[j] = item;
+  persistSaved();
+}
+
+function moveTo(item, f) {
+  item.f = f || null;
+  saved.splice(saved.indexOf(item), 1);
+  if (item.f) saved.push(item); else saved.unshift(item);   // same rule as saving
+  persistSaved();
+}
+
+// One shared "move to folder" menu, only put in the page while it is open.
+const moveSel = document.createElement('select');
+moveSel.className = 'move-sel';
+moveSel.setAttribute('aria-label', 'Move to folder');
+function openMove(li, item) {
+  moveSel.textContent = '';
+  const o = (v, t) => { const e = document.createElement('option'); e.value = v; e.textContent = t; moveSel.appendChild(e); };
+  o('', 'No folder');
+  folders.forEach(f => o(f.id, f.name));
+  moveSel.value = item.f || '';
+  moveSel.dataset.k = item.k;
+  li.appendChild(moveSel);
+  moveSel.focus();
+}
+moveSel.addEventListener('change', () => {
+  const item = saved.find(s => s.k === moveSel.dataset.k);
+  moveSel.remove();
+  if (item) moveTo(item, moveSel.value);
+});
+moveSel.addEventListener('blur', () => moveSel.remove());
+
+/* ----- folder actions ----- */
+function newFolder() {
+  const name = (prompt('Folder name') || '').trim().slice(0, 40);
+  if (!name) return;
+  const f = { id: 'f' + Date.now().toString(36), name };
+  folders.push(f);
+  view = f.id;
+  persistFolders();
+}
+function renameFolder() {
+  const f = folders.find(x => x.id === view);
+  if (!f) return;
+  const name = (prompt('Folder name', f.name) || '').trim().slice(0, 40);
+  if (!name) return;
+  f.name = name;
+  persistFolders();
+}
+function deleteFolder() {
+  const f = folders.find(x => x.id === view);
+  if (!f) return;
+  if (!confirm('Delete the folder "' + f.name + '"? Its videos stay saved, under Unsorted.')) return;
+  saved.forEach(s => { if (s.f === f.id) s.f = null; });
+  folders = folders.filter(x => x.id !== f.id);
+  if (saveTo === f.id) saveTo = '';
+  view = 'none';
+  store.set('saved', saved);
+  persistFolders();
+  syncSave();
+}
+
 els.save.addEventListener('click', toggleSave);
+saveSel.addEventListener('change', () => { saveTo = saveSel.value; store.set('saveTo', saveTo); });
+$('fRename').addEventListener('click', renameFolder);
+$('fDelete').addEventListener('click', deleteFolder);
+
+tabsEl.addEventListener('click', e => {
+  const b = e.target.closest('.tab');
+  if (!b) return;
+  if (b.dataset.v === '+') { newFolder(); return; }
+  view = b.dataset.v;
+  store.set('view', view);
+  renderLibrary();
+});
+
 els.savedList.addEventListener('click', e => {
   const li = e.target.closest('li');
   if (!li) return;
@@ -676,17 +1201,31 @@ els.savedList.addEventListener('click', e => {
   if (e.target.closest('.saved-del')) {
     saved = saved.filter(s => s.k !== item.k);
     persistSaved();
+  } else if (e.target.closest('.saved-up')) {
+    reorder(item, -1);
+  } else if (e.target.closest('.saved-down')) {
+    reorder(item, 1);
+  } else if (e.target.closest('.saved-move')) {
+    openMove(li, item);
   } else if (e.target.closest('.saved-play')) {
-    playSaved(item);
+    queue = view !== 'all' ? { f: folderOf(item) } : null;   // inside a folder: keep going in order
+    playSaved(item, false);
   }
 });
+
 // Keep other open tabs in sync
 window.addEventListener('storage', e => {
-  if (e.key === 'lt_saved') { saved = store.get('saved', []); renderLibrary(); syncSave(); }
+  if (e.key === 'lt_saved' || e.key === 'lt_folders') {
+    saved = store.get('saved', []);
+    folders = store.get('folders', []);
+    normalize();
+    renderLibrary();
+    syncSave();
+  }
 });
 
-els.form.addEventListener('submit', e => { e.preventDefault(); play(els.input.value); });
-els.input.addEventListener('paste', () => setTimeout(() => play(els.input.value), 0));
+els.form.addEventListener('submit', e => { e.preventDefault(); queue = null; play(els.input.value); });
+els.input.addEventListener('paste', () => setTimeout(() => { queue = null; play(els.input.value); }, 0));
 
 els.play.addEventListener('click', toggle);
 els.prev.addEventListener('click', () => ready && player.previousVideo());
