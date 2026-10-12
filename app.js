@@ -13,7 +13,7 @@ const els = {
   quality: $('quality'), loop: $('btnLoop'), pip: $('btnPip'),
   theater: $('btnTheater'), full: $('btnFull'), title: $('title'),
   toast: $('toast'), badge: $('badge'), fileWarn: $('fileWarn'),
-  save: $('btnSave'), savedList: $('savedList'), savedEmpty: $('savedEmpty'), savedCount: $('savedCount')
+  save: $('btnSave'), fast: $('btnFast'), savedList: $('savedList'), savedEmpty: $('savedEmpty'), savedCount: $('savedCount')
 };
 
 const store = {
@@ -112,6 +112,7 @@ function loadAPI() {
  *  State
  * ------------------------------------------------------------------ */
 const SPEEDS = [0.25, 0.5, 0.75, 0.85, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3];
+let speedList = SPEEDS;      // longer in fast mode
 const QL = { hd2160: '2160p', hd1440: '1440p', hd1080: '1080p', hd720: '720p', large: '480p', medium: '360p', small: '240p', tiny: '144p' };
 const DEFAULT_LEVELS = ['hd1080', 'hd720', 'large', 'medium', 'small', 'tiny'];
 
@@ -210,12 +211,17 @@ async function play(raw) {
   const opts = {
     host: 'https://www.youtube-nocookie.com',
     width: '100%', height: '100%', playerVars,
-    events: { onReady, onStateChange: onState, onError, onPlaybackQualityChange: onQuality }
+    events: {
+      onReady,
+      onStateChange: e => { if (!fastOn) onState(e); },
+      onError: e => { if (!fastOn) onError(e); },
+      onPlaybackQualityChange: e => { if (!fastOn) onQuality(e); }
+    }
   };
   if (info.id) opts.videoId = info.id;
   else { playerVars.listType = 'playlist'; playerVars.list = info.list; }
 
-  player = new YT.Player('ytMount', opts);
+  player = ytPlayer = new YT.Player('ytMount', opts);
 }
 
 function loadInto(info) {
@@ -427,10 +433,10 @@ function setSpeed(r) {
   }, 500);
 }
 function stepSpeed(dir) {
-  const i = SPEEDS.indexOf(rate);
-  const n = Math.min(SPEEDS.length - 1, Math.max(0, (i < 0 ? 3 : i) + dir));
-  setSpeed(SPEEDS[n]);
-  toast('Speed ' + SPEEDS[n] + 'x');
+  const i = speedList.indexOf(rate);
+  const n = Math.min(speedList.length - 1, Math.max(0, (i < 0 ? 3 : i) + dir));
+  setSpeed(speedList[n]);
+  toast('Speed ' + speedList[n] + 'x');
 }
 
 function buildQuality(levels) {
@@ -488,6 +494,13 @@ let pipWin = null, pipFrame = null, pipTime = 0, pipPlaying = false, pipVid = nu
 
 async function togglePip() {
   if (pipWin) { endPip(true); return; }
+  if (fastOn && fastV) {
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else await fastV.requestPictureInPicture();
+    } catch { toast('Floating window is not available here.'); }
+    return;
+  }
   if (!ready || !player.getVideoData) return;
 
   if (!hasDocPip) {
@@ -918,6 +931,255 @@ function onVideoChanged() {
 }
 
 /* ------------------------------------------------------------------ *
+ *  Fast mode: plays through a plain <video> from a public Invidious server,
+ *  so speeds above YouTube's embed limit work. Off by default.
+ * ------------------------------------------------------------------ */
+const FAST_SPEEDS = SPEEDS.concat([3.5, 4]);
+const QKEY = { 2160: 'hd2160', 1440: 'hd1440', 1080: 'hd1080', 720: 'hd720', 480: 'large', 360: 'medium', 240: 'small', 144: 'tiny' };
+let ytPlayer = null, fastOn = false, fastBusy = false, fastV = null;
+let fastStreams = [], fastCur = null, fastMeta = { id: null, title: '' };
+
+function buildSpeeds() {
+  els.speed.textContent = '';
+  speedList.forEach(sp => {
+    const o = document.createElement('option');
+    o.value = String(sp);
+    o.textContent = sp + 'x';
+    els.speed.appendChild(o);
+  });
+  els.speed.value = String(rate);
+}
+
+function pickStream(list, pref) {
+  const sorted = list.slice().sort((a, b) => a.h - b.h);
+  if (pref === 'auto') return sorted[sorted.length - 1];
+  const want = parseInt(QL[pref], 10) || 360;
+  let best = null;
+  sorted.forEach(x => { if (x.h <= want) best = x; });
+  return best || sorted[0];
+}
+
+function loadSrc(v, url) {
+  return new Promise(resolve => {
+    let done = false;
+    const end = ok => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      v.removeEventListener('loadedmetadata', good);
+      v.removeEventListener('error', bad);
+      resolve(ok);
+    };
+    const good = () => end(true), bad = () => end(false);
+    const timer = setTimeout(() => end(false), 12000);
+    v.addEventListener('loadedmetadata', good);
+    v.addEventListener('error', bad);
+    v.src = url;
+  });
+}
+
+// Try public servers one by one until one gives a stream the browser can really play.
+async function fastOpen(id, v) {
+  const list = await invInstances();
+  const order = (invGood ? [invGood].concat(list.filter(u => u !== invGood)) : list).slice(0, 5);
+  for (const base of order) {
+    try {
+      const r = await fetchT(base + '/api/v1/videos/' + encodeURIComponent(id) + '?local=true&fields=title,formatStreams', 9000);
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !d || d.error || !d.formatStreams) continue;
+      const streams = d.formatStreams.map(f => {
+        const h = parseInt(f.qualityLabel, 10) || 0;
+        return { h, key: QKEY[h], type: f.type || '',
+                 url: f.url && f.url.charAt(0) === '/' ? base + f.url : f.url };
+      }).filter(f => f.url && f.key && (!f.type || v.canPlayType(f.type)));
+      if (!streams.length) continue;
+      const pick = pickStream(streams, prefQuality);
+      if (await loadSrc(v, pick.url)) { invGood = base; return { title: d.title || '', streams, cur: pick }; }
+    } catch {}
+  }
+  throw new Error('Fast mode could not get a working public server right now. Try again later.');
+}
+
+function makeFastVideo() {
+  const v = document.createElement('video');
+  v.id = 'fastVideo';
+  v.setAttribute('playsinline', '');
+  v.preload = 'auto';
+  els.player.insertBefore(v, els.shield);
+  return v;
+}
+
+function fastQuality(key) {
+  if (!fastOn || !fastV || key === 'default') return;
+  const want = fastStreams.find(x => x.key === key);
+  if (!want || want === fastCur) return;
+  const v = fastV, t = v.currentTime, was = !v.paused;
+  fastCur = want;
+  v.addEventListener('loadedmetadata', () => {
+    v.currentTime = t;
+    v.playbackRate = rate;
+    if (was) v.play().catch(() => {});
+  }, { once: true });
+  v.src = want.url;
+  els.badge.textContent = 'Fast mode ' + want.h + 'p';
+}
+
+// Looks like the YouTube player to the rest of the app.
+function makeAdapter(v) {
+  return {
+    getDuration: () => v.duration || 0,
+    getCurrentTime: () => v.currentTime || 0,
+    getVideoLoadedFraction: () => {
+      const b = v.buffered, d = v.duration;
+      return d && b.length ? b.end(b.length - 1) / d : 0;
+    },
+    getVideoData: () => ({ video_id: fastMeta.id, title: fastMeta.title, isLive: false }),
+    seekTo: sec => { try { v.currentTime = sec; } catch {} },
+    playVideo: () => { const p = v.play(); if (p && p.catch) p.catch(() => {}); },
+    pauseVideo: () => v.pause(),
+    setVolume: n => { v.volume = Math.min(1, Math.max(0, n / 100)); },
+    getVolume: () => Math.round(v.volume * 100),
+    mute: () => { v.muted = true; },
+    unMute: () => { v.muted = false; },
+    isMuted: () => v.muted,
+    setPlaybackRate: r => { v.playbackRate = r; },
+    getPlaybackRate: () => v.playbackRate,
+    setPlaybackQuality: fastQuality,
+    getAvailableQualityLevels: () => fastStreams.map(x => x.key),
+    setLoop: () => {},
+    previousVideo: () => {},
+    nextVideo: () => {},
+    loadVideoById: o => fastLoadVideo(o.videoId, o.startSeconds || 0),
+    loadPlaylist: o => { exitFast('none'); ytPlayer.loadPlaylist(o); }
+  };
+}
+
+function fastApply(res, id) {
+  fastMeta = { id, title: res.title };
+  fastStreams = res.streams;
+  fastCur = res.cur;
+  buildQuality(fastStreams.map(x => x.key));
+  els.quality.value = fastCur.key;
+  els.badge.textContent = 'Fast mode ' + fastCur.h + 'p';
+  els.title.textContent = res.title;
+  if (res.title) document.title = res.title + ' - LiteTube';
+  lastVid = id;
+}
+
+async function enterFast() {
+  if (fastOn || fastBusy) return;
+  if (!ready || !ytPlayer || !ytPlayer.getVideoData) { toast('Play a video first.'); return; }
+  const id = ytPlayer.getVideoData().video_id;
+  if (!id) { toast('Play a video first.'); return; }
+
+  endPip(false);
+  fastBusy = true;
+  els.fast.classList.add('active');
+  toast('Fast mode: finding a public server...');
+  const v = makeFastVideo();
+  let res;
+  try { res = await fastOpen(id, v); }
+  catch (e) {
+    v.remove();
+    fastBusy = false;
+    els.fast.classList.remove('active');
+    toast(e.message);
+    return;
+  }
+
+  // Pick up exactly where the normal player is now.
+  const t = ytPlayer.getCurrentTime() || 0;
+  const ps = ytPlayer.getPlayerState();
+  const playing = ps === 1 || ps === 3;
+  fastOn = true;
+  fastBusy = false;
+  fastV = v;
+  ytPlayer.pauseVideo();
+  player = makeAdapter(v);
+  els.player.classList.add('fast');
+  hideMsg();
+
+  speedList = FAST_SPEEDS;
+  buildSpeeds();
+  fastApply(res, id);
+
+  v.currentTime = t;
+  v.volume = Math.min(1, Math.max(0, volume / 100));
+  v.muted = muted;
+  v.playbackRate = rate;
+  v.addEventListener('playing', () => onState({ data: 1 }));
+  v.addEventListener('pause', () => { if (!v.ended) onState({ data: 2 }); });
+  v.addEventListener('waiting', () => onState({ data: 3 }));
+  v.addEventListener('ended', () => onState({ data: 0 }));
+  v.addEventListener('error', () => {
+    if (fastV === v) showMsg('Fast mode lost the video. Press Fast to go back to the normal player.');
+  });
+  if (playing) v.play().catch(() => {}); else onState({ data: 2 });
+  toast('Fast mode on. Speeds up to 4x.');
+}
+
+// A new video was asked for while fast mode is on.
+async function fastLoadVideo(id, startAt) {
+  if (!fastOn || !fastV) return;
+  const v = fastV;
+  fastBusy = true;
+  v.pause();
+  try {
+    const res = await fastOpen(id, v);
+    if (fastV !== v) return;
+    fastApply(res, id);
+    if (startAt) v.currentTime = startAt;
+    v.playbackRate = rate;
+    v.play().catch(() => {});
+    onVideoChanged();
+  } catch (e) {
+    toast('Fast mode could not load this one. Using the normal player.');
+    exitFast({ id, start: startAt });
+  } finally {
+    fastBusy = false;
+  }
+}
+
+// next: undefined = hand the current video back to YouTube's player,
+//       'none' = just tear down, {id,start} = load that video in YouTube's player.
+function exitFast(next) {
+  if (!fastOn) return;
+  const v = fastV;
+  const t = v.currentTime || 0;
+  const playing = !v.paused && !v.ended;
+  const id = fastMeta.id;
+  fastOn = false;
+  fastBusy = false;
+  fastV = null;
+  try { if (document.pictureInPictureElement === v) document.exitPictureInPicture(); } catch {}
+  v.pause();
+  v.removeAttribute('src');
+  v.load();
+  v.remove();
+
+  player = ytPlayer;
+  els.player.classList.remove('fast');
+  els.fast.classList.remove('active');
+  hideMsg();
+  els.badge.textContent = '';
+
+  if (rate > 3) { rate = 3; store.set('rate', rate); }
+  speedList = SPEEDS;
+  buildSpeeds();
+  buildQuality(DEFAULT_LEVELS);
+  if (next === 'none') return;
+
+  ytPlayer.setVolume(volume);
+  if (muted) ytPlayer.mute(); else ytPlayer.unMute();
+  lastVid = null;                       // let the normal player re-apply speed and quality
+  const o = next ? { videoId: next.id, startSeconds: next.start || 0 } : { videoId: id, startSeconds: t };
+  if (next || playing) ytPlayer.loadVideoById(o); else ytPlayer.cueVideoById(o);
+}
+
+function toggleFast() { fastOn ? exitFast() : enterFast(); }
+els.fast.addEventListener('click', toggleFast);
+
+/* ------------------------------------------------------------------ *
  *  Wire up controls
  * ------------------------------------------------------------------ */
 /* ---------- Saved links with folders (kept in this browser's localStorage) ---------- */
@@ -1289,6 +1551,7 @@ document.addEventListener('keydown', e => {
     case 'f': case 'F': toggleFull(); break;
     case 't': case 'T': toggleTheater(); break;
     case 'i': case 'I': togglePip(); break;
+    case 'g': case 'G': toggleFast(); break;
     case 'r': case 'R': toggleLoop(); break;
     case 's': case 'S': toggleSave(); break;
     case '<': stepSpeed(-1); break;
@@ -1316,13 +1579,7 @@ document.addEventListener('keydown', e => {
   els.vol.value = muted ? 0 : volume;
   renderLibrary();
 
-  SPEEDS.forEach(s => {
-    const o = document.createElement('option');
-    o.value = String(s);
-    o.textContent = s + 'x';
-    els.speed.appendChild(o);
-  });
-  els.speed.value = String(rate);
+  buildSpeeds();
   buildQuality(DEFAULT_LEVELS);
 
   if (location.protocol === 'file:') els.fileWarn.hidden = false;
