@@ -1,3 +1,5 @@
+import { Innertube } from 'youtubei.js';
+
 const PIPED_FALLBACK = [
   'https://pipedapi.kavin.rocks',
   'https://pipedapi.leptons.xyz',
@@ -27,6 +29,8 @@ const QKEY = {
   480: 'large', 360: 'medium', 240: 'small', 144: 'tiny'
 };
 
+let innertubePromise = null;
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -48,13 +52,13 @@ function normalizeBase(value) {
   }
 }
 
-async function fetchText(url, timeoutMs = 2500) {
+async function fetchText(url, timeoutMs = 1800) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const r = await fetch(url, {
       signal: controller.signal,
-      headers: { accept: 'text/plain, text/markdown;q=0.9, */*;q=0.5', 'user-agent': 'LiteTube-FastMode/1.0' }
+      headers: { accept: 'text/plain, text/markdown;q=0.9, */*;q=0.5' }
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return await r.text();
@@ -63,13 +67,13 @@ async function fetchText(url, timeoutMs = 2500) {
   }
 }
 
-async function fetchJson(url, timeoutMs = 3800) {
+async function fetchJson(url, timeoutMs = 2600) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const r = await fetch(url, {
       signal: controller.signal,
-      headers: { accept: 'application/json', 'user-agent': 'LiteTube-FastMode/1.0' }
+      headers: { accept: 'application/json' }
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return await r.json();
@@ -78,13 +82,109 @@ async function fetchJson(url, timeoutMs = 3800) {
   }
 }
 
+function waitFor(ms) {
+  return new Promise(resolve => setTimeout(() => resolve(null), ms));
+}
+
+function getInnertube() {
+  if (!innertubePromise) {
+    innertubePromise = Innertube.create({ generate_session_locally: true })
+      .catch(error => {
+        innertubePromise = null;
+        throw error;
+      });
+  }
+  return innertubePromise;
+}
+
+function heightFromFormat(format) {
+  return Number(format.height) ||
+    parseInt(format.quality_label || format.qualityLabel || format.quality || '', 10) || 0;
+}
+
+async function queryYouTubeDirect(id) {
+  const diagnostics = [];
+  let yt;
+  try {
+    yt = await getInnertube();
+  } catch (error) {
+    return {
+      streams: [],
+      reason: 'youtubei.js initialization failed: ' + String(error && error.message || error).slice(0, 90)
+    };
+  }
+
+  const clients = [undefined, 'TV', 'ANDROID'];
+  for (const client of clients) {
+    try {
+      const options = client ? { client } : undefined;
+      const info = await yt.getBasicInfo(id, options);
+      const playback = info.playability_status || {};
+      const status = playback.status || 'unknown';
+      const sourceFormats = info.streaming_data
+        ? (info.streaming_data.formats || []).concat(info.streaming_data.adaptive_formats || [])
+        : [];
+      const streams = [];
+
+      for (const format of sourceFormats) {
+        const mime = String(format.mime_type || format.mimeType || '');
+        if (!/^video\//i.test(mime)) continue;
+        if (format.has_video === false || format.has_audio === false || format.video_only === true) continue;
+
+        const h = heightFromFormat(format);
+        const key = QKEY[h];
+        if (!h || !key) continue;
+
+        let url = '';
+        try {
+          url = await format.decipher(yt.session.player);
+        } catch {
+          url = format.url || '';
+        }
+        if (!url && format.url) url = format.url;
+        try {
+          const parsed = new URL(url);
+          if (parsed.protocol !== 'https:') continue;
+          url = parsed.href;
+        } catch { continue; }
+
+        streams.push({ h, key, type: mime, url });
+      }
+
+      const unique = Array.from(new Map(streams.map(stream => [stream.h + ':' + stream.url, stream])).values())
+        .sort((a, b) => b.h - a.h)
+        .slice(0, 8);
+
+      if (unique.length) {
+        return {
+          provider: 'YouTube',
+          title: info.basic_info && info.basic_info.title || '',
+          streams: unique
+        };
+      }
+
+      const reason = status !== 'OK'
+        ? 'YouTube player status: ' + status + (playback.reason ? ' (' + String(playback.reason).slice(0, 80) + ')' : '')
+        : 'YouTube returned no progressive audio+video formats';
+      diagnostics.push({ provider: 'YouTube' + (client ? '/' + client : '/default'), host: 'youtube.com', reason });
+    } catch (error) {
+      diagnostics.push({
+        provider: 'YouTube' + (client ? '/' + client : '/default'),
+        host: 'youtube.com',
+        reason: String(error && error.message || error).slice(0, 100)
+      });
+    }
+  }
+
+  return { streams: [], diagnostics, reason: diagnostics.length ? diagnostics[0].reason : 'YouTube extraction returned no usable streams' };
+}
+
 async function getPipedBases() {
   let discovered = [];
   try {
-    // This is the official, maintained Piped public-instance table.
     const md = await fetchText(
       'https://raw.githubusercontent.com/TeamPiped/documentation/main/content/docs/public-instances/index.md',
-      2500
+      1800
     );
     for (const line of md.split(/\r?\n/)) {
       const match = line.match(/\|\s*(https:\/\/[^|\s]+)\s*\|/i);
@@ -92,22 +192,22 @@ async function getPipedBases() {
       const base = normalizeBase(match[1]);
       if (base) discovered.push(base);
     }
-  } catch { /* fallback URLs below */ }
-  return Array.from(new Set(discovered.concat(PIPED_FALLBACK.map(normalizeBase).filter(Boolean)))).slice(0, 12);
+  } catch { /* use fallback candidates */ }
+  return Array.from(new Set(discovered.concat(PIPED_FALLBACK.map(normalizeBase).filter(Boolean)))).slice(0, 8);
 }
 
 async function getInvidiousBases() {
   let discovered = [];
   try {
-    const list = await fetchJson('https://api.invidious.io/instances.json?sort_by=type,health', 2500);
+    const list = await fetchJson('https://api.invidious.io/instances.json?sort_by=type,health', 1800);
     if (Array.isArray(list)) {
       discovered = list.map(entry => {
         const meta = entry && entry[1];
         return meta && meta.type === 'https' && meta.api === true ? normalizeBase(meta.uri) : null;
       }).filter(Boolean);
     }
-  } catch { /* fallback URLs below */ }
-  return Array.from(new Set(discovered.concat(INVIDIOUS_FALLBACK.map(normalizeBase).filter(Boolean)))).slice(0, 12);
+  } catch { /* use fallback candidates */ }
+  return Array.from(new Set(discovered.concat(INVIDIOUS_FALLBACK.map(normalizeBase).filter(Boolean)))).slice(0, 8);
 }
 
 function pipedStreams(data, base) {
@@ -133,32 +233,32 @@ function invStreams(data, base) {
 
 async function queryPiped(base, id) {
   try {
-    const data = await fetchJson(base + '/streams/' + encodeURIComponent(id), 3800);
+    const data = await fetchJson(base + '/streams/' + encodeURIComponent(id), 2300);
     const streams = pipedStreams(data, base);
     if (!streams.length) return { provider: 'Piped', host: new URL(base).hostname, reason: 'no muxed streams' };
     streams.sort((a, b) => b.h - a.h);
     return { provider: 'Piped', base, title: data.title || '', streams: streams.slice(0, 8) };
-  } catch (e) {
+  } catch (error) {
     return {
       provider: 'Piped',
       host: new URL(base).hostname,
-      reason: e && e.name === 'AbortError' ? 'timeout' : String(e && e.message || 'request failed').slice(0, 80)
+      reason: error && error.name === 'AbortError' ? 'timeout' : String(error && error.message || 'request failed').slice(0, 80)
     };
   }
 }
 
 async function queryInvidious(base, id) {
   try {
-    const data = await fetchJson(base + '/api/v1/videos/' + encodeURIComponent(id) + '?local=true', 3800);
+    const data = await fetchJson(base + '/api/v1/videos/' + encodeURIComponent(id) + '?local=true', 2300);
     const streams = invStreams(data, base);
     if (!streams.length) return { provider: 'Invidious', host: new URL(base).hostname, reason: 'no muxed streams' };
     streams.sort((a, b) => b.h - a.h);
     return { provider: 'Invidious', base, title: data.title || '', streams: streams.slice(0, 8) };
-  } catch (e) {
+  } catch (error) {
     return {
       provider: 'Invidious',
       host: new URL(base).hostname,
-      reason: e && e.name === 'AbortError' ? 'timeout' : String(e && e.message || 'request failed').slice(0, 80)
+      reason: error && error.name === 'AbortError' ? 'timeout' : String(error && error.message || 'request failed').slice(0, 80)
     };
   }
 }
@@ -171,6 +271,18 @@ export default {
     const id = (url.searchParams.get('id') || '').trim();
     if (!/^[\w-]{11}$/.test(id)) {
       return json({ ok: false, error: 'A valid 11-character YouTube video ID is required.' }, 400);
+    }
+
+    const directPromise = queryYouTubeDirect(id);
+    const direct = await Promise.race([directPromise, waitFor(4800)]);
+    const youtubeDiagnostics = direct && direct.diagnostics
+      ? direct.diagnostics
+      : direct && direct.reason
+        ? [{ provider: 'YouTube', host: 'youtube.com', reason: direct.reason }]
+        : [];
+
+    if (direct && direct.streams && direct.streams.length) {
+      return json({ ok: true, candidates: [direct], diagnostics: [] });
     }
 
     try {
@@ -188,24 +300,27 @@ export default {
         if (invidious[i]) candidates.push(invidious[i]);
       }
 
-      const diagnostics = checks.filter(x => !Array.isArray(x.streams))
-        .map(x => ({ provider: x.provider, host: x.host, reason: x.reason }))
-        .slice(0, 12);
+      const diagnostics = youtubeDiagnostics.concat(
+        checks.filter(x => !Array.isArray(x.streams))
+          .map(x => ({ provider: x.provider, host: x.host, reason: x.reason }))
+      ).slice(0, 18);
 
       if (!candidates.length) {
+        console.error('[LiteTube Fast API] No source returned usable streams', diagnostics);
         return json({
           ok: false,
-          error: 'LiteTube could not retrieve stream data from the public providers. Their servers may be down or blocking Vercel.',
+          error: 'No playable stream data was returned by YouTube or the public provider mirrors.',
           diagnostics
         }, 503);
       }
 
       return json({ ok: true, candidates, diagnostics });
-    } catch (e) {
+    } catch (error) {
       return json({
         ok: false,
         error: 'The server-side stream lookup failed. Please retry shortly.',
-        detail: String(e && e.message || 'unknown error').slice(0, 120)
+        detail: String(error && error.message || 'unknown error').slice(0, 120),
+        diagnostics: youtubeDiagnostics
       }, 502);
     }
   }

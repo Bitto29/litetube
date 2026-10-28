@@ -1074,8 +1074,7 @@ async function pipedInstances(forceRefresh = false) {
 }
 
 // Load stream metadata through LiteTube's same-origin Vercel Function.
-// Public Piped/Invidious APIs often omit CORS headers, so the browser must not
-// call them directly. The actual video URL is still played by the native <video>.
+// The endpoint tries YouTube's own player data first, then public API mirrors.
 async function fastOpen(id, v) {
   const apiUrl = new URL('/api/fast-stream', location.origin);
   apiUrl.searchParams.set('id', id);
@@ -1085,16 +1084,27 @@ async function fastOpen(id, v) {
     response = await fetchT(apiUrl.href, 11000);
     payload = await response.json().catch(() => null);
   } catch (e) {
-    throw new Error('LiteTube stream lookup failed. Please refresh and try again.');
+    throw new Error('LiteTube stream lookup failed. Refresh the page and try again.');
   }
 
   if (!response.ok || !payload || !payload.ok) {
     const reason = payload && payload.error;
-    throw new Error(reason || ('Fast-mode API returned HTTP ' + response.status + '. Wait for the Vercel deployment and retry.'));
+    const diagnostics = payload && Array.isArray(payload.diagnostics) ? payload.diagnostics : [];
+    console.error('[LiteTube] Fast stream lookup failed', {
+      status: response && response.status,
+      detail: payload && payload.detail,
+      diagnostics
+    });
+    const shortDetails = diagnostics.slice(0, 3).map(d => {
+      const source = [d.provider, d.host].filter(Boolean).join(' ');
+      return source + ': ' + (d.reason || 'unavailable');
+    }).join(' · ');
+    throw new Error((reason || ('Fast-mode API returned HTTP ' + (response && response.status || 'error') + '.')) +
+      (shortDetails ? ' Details: ' + shortDetails : ' Open the browser console for diagnostics.'));
   }
 
   const diagnostics = [];
-  for (const source of (payload.candidates || []).slice(0, 4)) {
+  for (const source of (payload.candidates || []).slice(0, 5)) {
     const streams = (source.streams || []).map(s => ({
       h: Number(s.h) || 0,
       key: s.key || QKEY[Number(s.h)] || '',
@@ -1113,10 +1123,10 @@ async function fastOpen(id, v) {
     const alternate = streams.filter(s => s.url !== picked.url && s.h > picked.h).sort((a, b) => a.h - b.h);
     const attempts = [picked].concat(lower, alternate).filter((s, i, all) =>
       all.findIndex(x => x.url === s.url) === i
-    ).slice(0, 2);
+    ).slice(0, 3);
 
     for (const stream of attempts) {
-      if (await loadSrc(v, stream.url, 4000)) {
+      if (await loadSrc(v, stream.url, 5500)) {
         if (source.provider === 'Invidious' && source.base) invGood = source.base;
         return {
           title: source.title || '',
@@ -1126,11 +1136,11 @@ async function fastOpen(id, v) {
         };
       }
     }
-    diagnostics.push(source.provider + ': media URL could not be played');
+    diagnostics.push(source.provider + ': returned URLs did not play');
   }
 
-  console.warn('[LiteTube] Same-origin stream API returned no playable source:', diagnostics, payload.diagnostics || []);
-  throw new Error('The stream service responded, but its video URLs could not be played. Try another video or retry later.');
+  console.warn('[LiteTube] Stream candidates were returned but none could play', diagnostics);
+  throw new Error('Stream URLs were found, but this browser could not play them. Try a lower quality.');
 }
 
 function makeFastVideo() {
