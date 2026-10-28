@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "LiteTube Speed Bridge",
+  "version": "1.0.0",
+  "description": "Enables LiteTube playback speed up to 4x inside the YouTube embed.",
+  "host_permissions": [
+    "https://litetube29.vercel.app/*",
+    "https://www.youtube-nocookie.com/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://litetube29.vercel.app/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.youtube-nocookie.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_start"
+    }
+  ]
+}

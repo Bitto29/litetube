@@ -111,7 +111,7 @@ function loadAPI() {
 /* ------------------------------------------------------------------ *
  *  State
  * ------------------------------------------------------------------ */
-const SPEEDS = [0.25, 0.5, 0.75, 0.85, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3];
+const SPEEDS = [0.25, 0.5, 0.75, 0.85, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.5, 4];
 let speedList = SPEEDS;      // longer in fast mode
 const QL = { hd2160: '2160p', hd1440: '1440p', hd1080: '1080p', hd720: '720p', large: '480p', medium: '360p', small: '240p', tiny: '144p' };
 const DEFAULT_LEVELS = ['hd1080', 'hd720', 'large', 'medium', 'small', 'tiny'];
@@ -289,7 +289,7 @@ function onNewVideoIfAny() {
   if (!data || data.video_id === lastVid) return;
   lastVid = data.video_id;
   onVideoChanged();
-  player.setPlaybackRate(rate);
+  applyPlaybackRate(rate);
   applyQuality();
   const levels = player.getAvailableQualityLevels && player.getAvailableQualityLevels();
   buildQuality(levels && levels.length ? levels : DEFAULT_LEVELS);
@@ -414,23 +414,89 @@ function syncVolUI() {
   els.vol.value = m ? 0 : volume;
 }
 
+let embedBridgeRequestId = '';
+let embedBridgeTimer = null;
+let embedBridgeAvailable = false;
+
+window.addEventListener('message', event => {
+  if (event.source !== window || event.origin !== location.origin) return;
+  const data = event.data;
+  if (!data || data.source !== 'litetube-speed-bridge' || data.type !== 'RATE_RESULT') return;
+  if (!data.requestId || data.requestId !== embedBridgeRequestId) return;
+
+  clearTimeout(embedBridgeTimer);
+  embedBridgeTimer = null;
+
+  if (data.ok) {
+    embedBridgeAvailable = true;
+    if (data.rate > 2) toast('Playback boosted to ' + data.rate + 'x');
+    return;
+  }
+
+  if (data.required && data.rate > 2 && !fastOn) {
+    rate = 2;
+    store.set('rate', rate);
+    els.speed.value = String(rate);
+    try { if (ready && player && player.setPlaybackRate) player.setPlaybackRate(2); } catch {}
+    toast('For playback above 2x, install the LiteTube Speed Bridge extension.');
+  }
+});
+
+function requestEmbedSpeed(speed, required) {
+  const requestId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+  embedBridgeRequestId = requestId;
+  clearTimeout(embedBridgeTimer);
+  embedBridgeTimer = null;
+
+  window.postMessage({
+    source: 'litetube-app',
+    type: 'SET_RATE',
+    requestId,
+    rate: speed,
+    required: !!required
+  }, location.origin);
+
+  if (required) {
+    embedBridgeTimer = setTimeout(() => {
+      if (embedBridgeRequestId !== requestId || embedBridgeAvailable) return;
+      rate = 2;
+      store.set('rate', rate);
+      els.speed.value = String(rate);
+      try { if (ready && player && player.setPlaybackRate) player.setPlaybackRate(2); } catch {}
+      toast('Above 2x needs the LiteTube Speed Bridge extension. See the repo’s extension folder.');
+    }, 1800);
+  }
+}
+
+function applyPlaybackRate(speed) {
+  if (!ready || !player || !player.setPlaybackRate) return;
+
+  // Direct <video> mode supports high playback rates natively.
+  if (fastOn) {
+    player.setPlaybackRate(speed);
+    return;
+  }
+
+  if (speed > 2) {
+    // Keep the official embed at its highest supported rate while the extension
+    // sets the iframe's real HTMLMediaElement playbackRate to the requested rate.
+    try { player.setPlaybackRate(2); } catch {}
+    requestEmbedSpeed(speed, true);
+    return;
+  }
+
+  player.setPlaybackRate(speed);
+  // Let the bridge release any previous >2x override when the user slows down.
+  requestEmbedSpeed(speed, false);
+}
+
 function setSpeed(r) {
+  r = Math.min(4, Math.max(0.25, Number(r) || 1));
   rate = r;
   store.set('rate', r);
   els.speed.value = String(r);
   if (!ready) return;
-  player.setPlaybackRate(r);
-  // YouTube may clamp embedded playback (usually to 2x). Check what it really applied.
-  setTimeout(() => {
-    if (!ready || rate !== r) return;
-    const got = player.getPlaybackRate();
-    if (got && got !== r) {
-      rate = got;
-      store.set('rate', got);
-      els.speed.value = String(got);
-      toast('YouTube limits embedded video to ' + got + 'x');
-    }
-  }, 500);
+  applyPlaybackRate(r);
 }
 function stepSpeed(dir) {
   const i = speedList.indexOf(rate);
@@ -968,7 +1034,7 @@ function onVideoChanged() {
  *  Fast mode: plays through a plain <video> from a public Invidious server,
  *  so speeds above YouTube's embed limit work. Off by default.
  * ------------------------------------------------------------------ */
-const FAST_SPEEDS = SPEEDS.concat([3.5, 4]);
+const FAST_SPEEDS = SPEEDS;
 const QKEY = { 2160: 'hd2160', 1440: 'hd1440', 1080: 'hd1080', 720: 'hd720', 480: 'large', 360: 'medium', 240: 'small', 144: 'tiny' };
 let ytPlayer = null, fastOn = false, fastBusy = false, fastV = null;
 let fastStreams = [], fastCur = null, fastMeta = { id: null, title: '' };
@@ -1306,7 +1372,6 @@ function exitFast(next) {
   hideMsg();
   els.badge.textContent = '';
 
-  if (rate > 3) { rate = 3; store.set('rate', rate); }
   speedList = SPEEDS;
   buildSpeeds();
   buildQuality(DEFAULT_LEVELS);
