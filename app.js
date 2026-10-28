@@ -458,7 +458,7 @@ function requestEmbedSpeed(speed, required) {
 
   if (required) {
     embedBridgeTimer = setTimeout(() => {
-      if (embedBridgeRequestId !== requestId || embedBridgeAvailable) return;
+      if (embedBridgeRequestId !== requestId) return;
       rate = 2;
       store.set('rate', rate);
       els.speed.value = String(rate);
@@ -1384,7 +1384,20 @@ function exitFast(next) {
   if (next || playing) ytPlayer.loadVideoById(o); else ytPlayer.cueVideoById(o);
 }
 
-function toggleFast() { fastOn ? exitFast() : enterFast(); }
+function toggleFast() {
+  if (fastOn) { exitFast(); return; }
+  if (!ready || !player) { toast('Play a video first.'); return; }
+
+  // Direct public stream resolvers are not dependable from hosted environments.
+  // Use the extension bridge for the same practical goal: >2x inside the embed.
+  if (rate > 2) {
+    setSpeed(2);
+    els.fast.classList.remove('active');
+    toast('High-speed boost off');
+  } else {
+    setSpeed(3);
+  }
+}
 els.fast.addEventListener('click', toggleFast);
 
 /* ------------------------------------------------------------------ *
