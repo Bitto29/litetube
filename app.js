@@ -745,8 +745,18 @@ async function commentsGoogle(id, sort, token) {
   };
 }
 
-const FALLBACK_INV = ['https://inv.nadeko.net', 'https://yewtu.be'];
-let invList = null, invGood = null;
+// Prefer the current public-instance directory, but keep trusted fallbacks for
+// cases where the directory itself is blocked or temporarily unavailable.
+const FALLBACK_INV = [
+  'https://inv.nadeko.net',
+  'https://invidious.nerdvpn.de',
+  'https://yt.chocolatemoo53.com',
+  'https://invidious.tiekoetter.com'
+];
+const INV_CACHE_MS = 5 * 60 * 1000;
+let invList = null, invListAt = 0, invListPromise = null, invGood = null;
+let invFastGood = null;
+const invFastFailed = new Map();
 
 function fetchT(url, ms) {
   const ac = new AbortController();
@@ -754,25 +764,49 @@ function fetchT(url, ms) {
   return fetch(url, { signal: ac.signal }).finally(() => clearTimeout(t));
 }
 
-async function invInstances() {
-  if (invList) return invList;
-  let list = [];
+function normalizeInvBase(value) {
   try {
-    const r = await fetchT('https://api.invidious.io/instances.json?sort_by=type,health', 6000);
-    const j = await r.json();
-    list = j.filter(x => x[1] && x[1].type === 'https' && x[1].api === true && x[1].cors === true)
-            .map(x => x[1].uri.replace(/\/$/, ''));
-  } catch {}
-  invList = list.concat(FALLBACK_INV.filter(u => !list.includes(u)));
-  return invList;
+    const u = new URL(value);
+    if (u.protocol !== 'https:' || u.username || u.password) return null;
+    return (u.origin + u.pathname).replace(/\/+$/, '');
+  } catch { return null; }
+}
+
+async function invInstances(forceRefresh = false) {
+  if (!forceRefresh && invList && Date.now() - invListAt < INV_CACHE_MS) return invList;
+  if (invListPromise) return invListPromise;
+
+  invListPromise = (async () => {
+    const discovered = [];
+    try {
+      const r = await fetchT('https://api.invidious.io/instances.json?sort_by=type,health', 6000);
+      if (!r.ok) throw new Error('Instance directory returned HTTP ' + r.status);
+      const j = await r.json();
+      if (Array.isArray(j)) {
+        j.forEach(entry => {
+          const meta = entry && entry[1];
+          if (!meta || meta.type !== 'https' || meta.api !== true || meta.cors !== true) return;
+          const base = normalizeInvBase(meta.uri);
+          if (base) discovered.push(base);
+        });
+      }
+    } catch { /* The vetted fallback list still lets LiteTube attempt discovery. */ }
+
+    invList = Array.from(new Set(discovered.concat(FALLBACK_INV.map(normalizeInvBase).filter(Boolean))));
+    invListAt = Date.now();
+    return invList;
+  })();
+
+  try { return await invListPromise; }
+  finally { invListPromise = null; }
 }
 
 async function inv(path) {
   const list = await invInstances();
   const order = invGood ? [invGood].concat(list.filter(u => u !== invGood)) : list;
-  for (const base of order.slice(0, 6)) {
+  for (const base of order.slice(0, 8)) {
     try {
-      const r = await fetchT(base + '/api/v1/' + path, 9000);
+      const r = await fetchT(base + '/api/v1/' + path, 7500);
       const data = await r.json().catch(() => null);
       if (r.ok && data && !data.error) { invGood = base; return data; }
       if (data && /comment/i.test(data.error || '') && /disabled/i.test(data.error || '')) {
@@ -959,7 +993,7 @@ function pickStream(list, pref) {
   return best || sorted[0];
 }
 
-function loadSrc(v, url) {
+function loadSrc(v, url, timeoutMs = 7500) {
   return new Promise(resolve => {
     let done = false;
     const end = ok => {
@@ -971,33 +1005,93 @@ function loadSrc(v, url) {
       resolve(ok);
     };
     const good = () => end(true), bad = () => end(false);
-    const timer = setTimeout(() => end(false), 12000);
+    const timer = setTimeout(() => end(false), timeoutMs);
     v.addEventListener('loadedmetadata', good);
     v.addEventListener('error', bad);
     v.src = url;
+    v.load();
   });
 }
 
-// Try public servers one by one until one gives a stream the browser can really play.
-async function fastOpen(id, v) {
-  const list = await invInstances();
-  const order = (invGood ? [invGood].concat(list.filter(u => u !== invGood)) : list).slice(0, 5);
-  for (const base of order) {
-    try {
-      const r = await fetchT(base + '/api/v1/videos/' + encodeURIComponent(id) + '?local=true&fields=title,formatStreams', 9000);
-      const d = await r.json().catch(() => null);
-      if (!r.ok || !d || d.error || !d.formatStreams) continue;
-      const streams = d.formatStreams.map(f => {
-        const h = parseInt(f.qualityLabel, 10) || 0;
-        return { h, key: QKEY[h], type: f.type || '',
-                 url: f.url && f.url.charAt(0) === '/' ? base + f.url : f.url };
-      }).filter(f => f.url && f.key && (!f.type || v.canPlayType(f.type)));
-      if (!streams.length) continue;
-      const pick = pickStream(streams, prefQuality);
-      if (await loadSrc(v, pick.url)) { invGood = base; return { title: d.title || '', streams, cur: pick }; }
-    } catch {}
+function orderFastInstances(list) {
+  const now = Date.now();
+  for (const [base, at] of invFastFailed) {
+    if (now - at > 3 * 60 * 1000) invFastFailed.delete(base);
   }
-  throw new Error('Fast mode could not get a working public server right now. Try again later.');
+  return Array.from(new Set(list)).sort((a, b) => {
+    if (a === invFastGood) return -1;
+    if (b === invFastGood) return 1;
+    const af = invFastFailed.has(a), bf = invFastFailed.has(b);
+    return af === bf ? 0 : (af ? 1 : -1);
+  }).slice(0, 8);
+}
+
+// Fetch metadata from several candidates together, then test actual playback.
+// One bad server or one broken quality should not prevent another from working.
+async function fastOpen(id, v) {
+  const diagnostics = [];
+  const attempted = new Set();
+
+  // A failed cached list gets one forced directory refresh; only newly discovered
+  // candidates are retried so a refresh does not waste time on identical failures.
+  for (let pass = 0; pass < 2; pass++) {
+    const list = await invInstances(pass === 1);
+    const order = orderFastInstances(list).filter(base => !attempted.has(base));
+    if (!order.length) continue;
+    order.forEach(base => attempted.add(base));
+
+    const checks = await Promise.all(order.map(async base => {
+      try {
+        const r = await fetchT(base + '/api/v1/videos/' + encodeURIComponent(id) + '?local=true&fields=title,formatStreams', 6500);
+        if (!r.ok) return { base, reason: 'HTTP ' + r.status };
+        const d = await r.json().catch(() => null);
+        if (!d || d.error) return { base, reason: 'video API rejected the request' };
+        if (!Array.isArray(d.formatStreams)) return { base, reason: 'no stream list in response' };
+
+        const streams = d.formatStreams.map(f => {
+          const h = parseInt(f.qualityLabel, 10) || 0;
+          let url = f.url || '';
+          try { if (url.charAt(0) === '/') url = new URL(url, base).href; } catch { url = ''; }
+          return { h, key: QKEY[h], type: f.type || '', url };
+        }).filter(f => f.url && /^https:\/\//i.test(f.url) && f.key && (!f.type || v.canPlayType(f.type)));
+
+        return streams.length
+          ? { base, title: d.title || '', streams }
+          : { base, reason: 'no browser-compatible streams' };
+      } catch (e) {
+        return { base, reason: e && e.name === 'AbortError' ? 'request timed out' : 'network or CORS error' };
+      }
+    }));
+
+    for (const result of checks) {
+      if (!result.streams) {
+        invFastFailed.set(result.base, Date.now());
+        diagnostics.push(new URL(result.base).hostname + ': ' + result.reason);
+        continue;
+      }
+
+      const pick = pickStream(result.streams, prefQuality);
+      const lower = result.streams.filter(s => s.url !== pick.url && s.h < pick.h).sort((a, b) => b.h - a.h);
+      const higher = result.streams.filter(s => s.url !== pick.url && s.h > pick.h).sort((a, b) => a.h - b.h);
+      const tries = [pick].concat(lower, higher).slice(0, 2);
+      let played = null;
+      for (const stream of tries) {
+        if (await loadSrc(v, stream.url)) { played = stream; break; }
+      }
+
+      if (played) {
+        invFastGood = result.base;
+        invFastFailed.delete(result.base);
+        return { title: result.title, streams: result.streams, cur: played };
+      }
+
+      invFastFailed.set(result.base, Date.now());
+      diagnostics.push(new URL(result.base).hostname + ': stream failed to start');
+    }
+  }
+
+  console.warn('[LiteTube] Fast mode could not find a playable public instance:', diagnostics);
+  throw new Error('Fast mode could not reach a playable public server. Normal playback is unchanged; try again shortly.');
 }
 
 function makeFastVideo() {
