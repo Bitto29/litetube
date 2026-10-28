@@ -1073,152 +1073,64 @@ async function pipedInstances(forceRefresh = false) {
   finally { pipedListPromise = null; }
 }
 
-function orderFastInstances(list, preferred, failed) {
-  const now = Date.now();
-  for (const [base, at] of failed) {
-    if (now - at > FAST_FAIL_TTL) failed.delete(base);
-  }
-  return Array.from(new Set(list)).sort((a, b) => {
-    if (a === preferred) return -1;
-    if (b === preferred) return 1;
-    const af = failed.has(a), bf = failed.has(b);
-    return af === bf ? 0 : (af ? 1 : -1);
-  });
-}
-
-function playablePipedStreams(data, base, v) {
-  if (!Array.isArray(data.videoStreams)) return [];
-  return data.videoStreams.map(f => {
-    const h = parseInt(f.quality || f.qualityLabel || '', 10) || parseInt(f.height, 10) || 0;
-    let url = f.url || '';
-    try { if (url) url = new URL(url, base).href; } catch { url = ''; }
-    return { h, key: QKEY[h], type: f.mimeType || '', url, videoOnly: f.videoOnly === true };
-  }).filter(f =>
-    f.url && /^https:\/\//i.test(f.url) && f.key && !f.videoOnly &&
-    (!f.type || v.canPlayType(f.type))
-  );
-}
-
-function playableInvidiousStreams(data, base, v) {
-  if (!Array.isArray(data.formatStreams)) return [];
-  return data.formatStreams.map(f => {
-    const h = parseInt(f.qualityLabel, 10) || 0;
-    let url = f.url || '';
-    try { if (url) url = new URL(url, base).href; } catch { url = ''; }
-    return { h, key: QKEY[h], type: f.type || '', url };
-  }).filter(f =>
-    f.url && /^https:\/\//i.test(f.url) && f.key &&
-    (!f.type || v.canPlayType(f.type))
-  );
-}
-
-async function tryStreamsOnVideo(v, streams) {
-  const picked = pickStream(streams, prefQuality);
-  const lower = streams.filter(s => s.url !== picked.url && s.h < picked.h).sort((a, b) => b.h - a.h);
-  const higher = streams.filter(s => s.url !== picked.url && s.h > picked.h).sort((a, b) => a.h - b.h);
-  const candidates = [picked].concat(lower, higher).filter((s, i, arr) => arr.findIndex(x => x.url === s.url) === i).slice(0, 2);
-
-  for (const stream of candidates) {
-    if (await loadSrc(v, stream.url, 5500)) return stream;
-  }
-  return null;
-}
-
-async function fastOpenPiped(id, v, diagnostics) {
-  let list;
-  try { list = await pipedInstances(); }
-  catch { return null; }
-
-  const order = orderFastInstances(list, pipedFastGood, pipedFastFailed).slice(0, 10);
-  // Query a small group in parallel to keep latency reasonable without hammering
-  // every community instance for the same video.
-  for (let offset = 0; offset < order.length; offset += 5) {
-    const batch = order.slice(offset, offset + 5);
-    const results = await Promise.all(batch.map(async base => {
-      try {
-        const r = await fetchT(base + '/streams/' + encodeURIComponent(id), 6000);
-        if (!r.ok) return { base, reason: 'HTTP ' + r.status };
-        const data = await r.json().catch(() => null);
-        if (!data || data.error) return { base, reason: 'stream API rejected the request' };
-        const streams = playablePipedStreams(data, base, v);
-        return streams.length ? { base, title: data.title || '', streams } :
-          { base, reason: 'no compatible muxed video streams' };
-      } catch (e) {
-        return { base, reason: e && e.name === 'AbortError' ? 'request timed out' : 'network/CORS error' };
-      }
-    }));
-
-    for (const result of results) {
-      if (!result.streams) {
-        pipedFastFailed.set(result.base, Date.now());
-        diagnostics.push('Piped ' + new URL(result.base).hostname + ': ' + result.reason);
-        continue;
-      }
-      const played = await tryStreamsOnVideo(v, result.streams);
-      if (played) {
-        pipedFastGood = result.base;
-        pipedFastFailed.delete(result.base);
-        return { title: result.title, streams: result.streams, cur: played, provider: 'Piped' };
-      }
-      pipedFastFailed.set(result.base, Date.now());
-      diagnostics.push('Piped ' + new URL(result.base).hostname + ': media URL would not play');
-    }
-  }
-
-  return null;
-}
-
-// Try Piped first, then Invidious. Both return direct media URLs for LiteTube's
-// native <video>, which can play above 2x; YouTube's embedded player cannot.
+// Load stream metadata through LiteTube's same-origin Vercel Function.
+// Public Piped/Invidious APIs often omit CORS headers, so the browser must not
+// call them directly. The actual video URL is still played by the native <video>.
 async function fastOpen(id, v) {
-  const diagnostics = [];
-  const piped = await fastOpenPiped(id, v, diagnostics);
-  if (piped) return piped;
+  const apiUrl = new URL('/api/fast-stream', location.origin);
+  apiUrl.searchParams.set('id', id);
 
-  const attempted = new Set();
-  for (let pass = 0; pass < 2; pass++) {
-    const list = await invInstances(pass === 1);
-    const order = orderFastInstances(list, invFastGood, invFastFailed)
-      .filter(base => !attempted.has(base))
-      .slice(0, 8);
-    if (!order.length) continue;
-    order.forEach(base => attempted.add(base));
-
-    const checks = await Promise.all(order.map(async base => {
-      try {
-        const r = await fetchT(base + '/api/v1/videos/' + encodeURIComponent(id) + '?local=true', 6500);
-        if (!r.ok) return { base, reason: 'HTTP ' + r.status };
-        const data = await r.json().catch(() => null);
-        if (!data || data.error) return { base, reason: 'video API rejected the request' };
-        const streams = playableInvidiousStreams(data, base, v);
-        return streams.length ? { base, title: data.title || '', streams } :
-          { base, reason: 'no browser-compatible streams' };
-      } catch (e) {
-        return { base, reason: e && e.name === 'AbortError' ? 'request timed out' : 'network/CORS error' };
-      }
-    }));
-
-    for (const result of checks) {
-      if (!result.streams) {
-        invFastFailed.set(result.base, Date.now());
-        diagnostics.push('Invidious ' + new URL(result.base).hostname + ': ' + result.reason);
-        continue;
-      }
-
-      const played = await tryStreamsOnVideo(v, result.streams);
-      if (played) {
-        invFastGood = result.base;
-        invFastFailed.delete(result.base);
-        return { title: result.title, streams: result.streams, cur: played, provider: 'Invidious' };
-      }
-
-      invFastFailed.set(result.base, Date.now());
-      diagnostics.push('Invidious ' + new URL(result.base).hostname + ': media URL would not play');
-    }
+  let response, payload;
+  try {
+    response = await fetchT(apiUrl.href, 11000);
+    payload = await response.json().catch(() => null);
+  } catch (e) {
+    throw new Error('LiteTube stream lookup failed. Please refresh and try again.');
   }
 
-  console.warn('[LiteTube] Fast mode tried Piped and Invidious, but found no playable stream:', diagnostics);
-  throw new Error('Could not find a playable direct stream. The public providers may be blocked or down; normal playback is unchanged.');
+  if (!response.ok || !payload || !payload.ok) {
+    const reason = payload && payload.error;
+    throw new Error(reason || ('Fast-mode API returned HTTP ' + response.status + '. Wait for the Vercel deployment and retry.'));
+  }
+
+  const diagnostics = [];
+  for (const source of (payload.candidates || []).slice(0, 4)) {
+    const streams = (source.streams || []).map(s => ({
+      h: Number(s.h) || 0,
+      key: s.key || QKEY[Number(s.h)] || '',
+      type: s.type || '',
+      url: s.url || ''
+    })).filter(s => s.h && s.key && s.url && /^https:\/\//i.test(s.url) &&
+      (!s.type || v.canPlayType(s.type)));
+
+    if (!streams.length) {
+      diagnostics.push(source.provider + ': no browser-compatible streams');
+      continue;
+    }
+
+    const picked = pickStream(streams, prefQuality);
+    const lower = streams.filter(s => s.url !== picked.url && s.h < picked.h).sort((a, b) => b.h - a.h);
+    const alternate = streams.filter(s => s.url !== picked.url && s.h > picked.h).sort((a, b) => a.h - b.h);
+    const attempts = [picked].concat(lower, alternate).filter((s, i, all) =>
+      all.findIndex(x => x.url === s.url) === i
+    ).slice(0, 2);
+
+    for (const stream of attempts) {
+      if (await loadSrc(v, stream.url, 4000)) {
+        if (source.provider === 'Invidious' && source.base) invGood = source.base;
+        return {
+          title: source.title || '',
+          streams,
+          cur: stream,
+          provider: source.provider || 'Direct stream'
+        };
+      }
+    }
+    diagnostics.push(source.provider + ': media URL could not be played');
+  }
+
+  console.warn('[LiteTube] Same-origin stream API returned no playable source:', diagnostics, payload.diagnostics || []);
+  throw new Error('The stream service responded, but its video URLs could not be played. Try another video or retry later.');
 }
 
 function makeFastVideo() {
