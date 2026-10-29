@@ -414,80 +414,26 @@ function syncVolUI() {
   els.vol.value = m ? 0 : volume;
 }
 
-let embedBridgeRequestId = '';
-let embedBridgeTimer = null;
-let embedBridgeAvailable = false;
-
-window.addEventListener('message', event => {
-  if (event.source !== window || event.origin !== location.origin) return;
-  const data = event.data;
-  if (!data || data.source !== 'litetube-speed-bridge' || data.type !== 'RATE_RESULT') return;
-  if (!data.requestId || data.requestId !== embedBridgeRequestId) return;
-
-  clearTimeout(embedBridgeTimer);
-  embedBridgeTimer = null;
-
-  if (data.ok) {
-    embedBridgeAvailable = true;
-    if (data.rate > 2) toast('Playback boosted to ' + data.rate + 'x');
-    return;
-  }
-
-  if (data.required && data.rate > 2 && !fastOn) {
-    rate = 2;
-    store.set('rate', rate);
-    els.speed.value = String(rate);
-    try { if (ready && player && player.setPlaybackRate) player.setPlaybackRate(2); } catch {}
-    toast('For playback above 2x, install the LiteTube Speed Bridge extension.');
-  }
-});
-
-function requestEmbedSpeed(speed, required) {
-  const requestId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
-  embedBridgeRequestId = requestId;
-  clearTimeout(embedBridgeTimer);
-  embedBridgeTimer = null;
-
-  window.postMessage({
-    source: 'litetube-app',
-    type: 'SET_RATE',
-    requestId,
-    rate: speed,
-    required: !!required
-  }, location.origin);
-
-  if (required) {
-    embedBridgeTimer = setTimeout(() => {
-      if (embedBridgeRequestId !== requestId) return;
-      rate = 2;
-      store.set('rate', rate);
-      els.speed.value = String(rate);
-      try { if (ready && player && player.setPlaybackRate) player.setPlaybackRate(2); } catch {}
-      toast('Above 2x needs the LiteTube Speed Bridge extension. See the repo’s extension folder.');
-    }, 1800);
-  }
-}
-
 function applyPlaybackRate(speed) {
   if (!ready || !player || !player.setPlaybackRate) return;
-
-  // Direct <video> mode supports high playback rates natively.
-  if (fastOn) {
-    player.setPlaybackRate(speed);
-    return;
-  }
+  try { player.setPlaybackRate(speed); }
+  catch { toast('This YouTube player does not accept that playback speed.'); return; }
 
   if (speed > 2) {
-    // Keep the official embed at its highest supported rate while the extension
-    // sets the iframe's real HTMLMediaElement playbackRate to the requested rate.
-    try { player.setPlaybackRate(2); } catch {}
-    requestEmbedSpeed(speed, true);
-    return;
+    const requested = speed;
+    setTimeout(() => {
+      if (!ready || !player || rate !== requested || fastOn) return;
+      let actual = 0;
+      try { actual = player.getPlaybackRate ? Number(player.getPlaybackRate()) : 0; } catch {}
+      if (actual && actual + 0.01 < requested) {
+        toast('YouTube limited this embed to ' + actual + 'x. This player does not allow ' + requested + 'x.');
+        rate = actual;
+        store.set('rate', rate);
+        els.speed.value = String(rate);
+        els.fast.classList.remove('active');
+      }
+    }, 900);
   }
-
-  player.setPlaybackRate(speed);
-  // Let the bridge release any previous >2x override when the user slows down.
-  requestEmbedSpeed(speed, false);
 }
 
 function setSpeed(r) {
@@ -1385,17 +1331,15 @@ function exitFast(next) {
 }
 
 function toggleFast() {
-  if (fastOn) { exitFast(); return; }
   if (!ready || !player) { toast('Play a video first.'); return; }
-
-  // Direct public stream resolvers are not dependable from hosted environments.
-  // Use the extension bridge for the same practical goal: >2x inside the embed.
   if (rate > 2) {
     setSpeed(2);
     els.fast.classList.remove('active');
-    toast('High-speed boost off');
+    toast('Playback speed set to 2x');
   } else {
     setSpeed(3);
+    els.fast.classList.add('active');
+    toast('Requesting 3x playback from YouTube…');
   }
 }
 els.fast.addEventListener('click', toggleFast);
