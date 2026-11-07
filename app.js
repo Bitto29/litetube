@@ -1686,11 +1686,32 @@ els.seek.addEventListener('change', () => {
   seekTo(els.seek.value / 1000 * dur);
 });
 
-// Click = play/pause, double click = fullscreen
+// Click = play/pause; double-click the left/right half to seek by 5 seconds.
 let clickT = 0;
-els.shield.addEventListener('click', () => {
-  if (clickT) { clearTimeout(clickT); clickT = 0; toggleFull(); return; }
-  clickT = setTimeout(() => { clickT = 0; toggle(); }, 250);
+let clickPoint = null;
+els.shield.addEventListener('click', e => {
+  const rect = els.player.getBoundingClientRect();
+  const x = e.clientX;
+
+  if (clickT) {
+    clearTimeout(clickT);
+    clickT = 0;
+    const firstX = clickPoint ? clickPoint.x : x;
+    clickPoint = null;
+
+    const goBack = (firstX + x) / 2 < rect.left + rect.width / 2;
+    seekBy(goBack ? -5 : 5);
+    toast(goBack ? 'Skipped back 5 seconds' : 'Skipped forward 5 seconds');
+    wake();
+    return;
+  }
+
+  clickPoint = { x };
+  clickT = setTimeout(() => {
+    clickT = 0;
+    clickPoint = null;
+    toggle();
+  }, 300);
 });
 
 // Keyboard
