@@ -1353,15 +1353,13 @@ function exitFast(next) {
 
 function toggleFast() {
   if (!ready || !player) { toast('Play a video first.'); return; }
-  if (rate > 2) {
-    setSpeed(2);
-    els.fast.classList.remove('active');
-    toast('Playback speed set to 2x');
-  } else {
-    setSpeed(3);
-    els.fast.classList.add('active');
-    toast('Requesting 3x playback from YouTube…');
+  if (fastBusy) return;
+  if (fastOn) {
+    exitFast();
+    toast('Fast mode off');
+    return;
   }
+  enterFast();
 }
 els.fast.addEventListener('click', toggleFast);
 
