@@ -272,7 +272,7 @@ export default async function handler(req, res) {
     id = String((req.query && req.query.id) || requestUrl.searchParams.get('id') || '').trim();
   } catch {}
 
-  if (!/^[\\w-]{11}$/.test(id)) {
+  if (!/^[\w-]{11}$/.test(id)) {
     return sendJson(res, { ok: false, error: 'A valid 11-character YouTube video ID is required.' }, 400);
   }
 
