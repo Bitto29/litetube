@@ -18,9 +18,8 @@ const PIPED_FALLBACK = [
 
 const INVIDIOUS_FALLBACK = [
   'https://inv.nadeko.net',
-  'https://yewtu.be',
-  'https://inv.tux.pizza',
   'https://invidious.nerdvpn.de',
+  'https://yt.chocolatemoo53.com',
   'https://invidious.tiekoetter.com'
 ];
 
