@@ -1005,21 +1005,23 @@ function pickStream(list, pref) {
   return best || sorted[0];
 }
 
-function loadSrc(v, url, timeoutMs = 7500) {
+function loadSrc(v, url, timeoutMs = 10000) {
   return new Promise(resolve => {
     let done = false;
     const end = ok => {
       if (done) return;
       done = true;
       clearTimeout(timer);
-      v.removeEventListener('loadedmetadata', good);
+      v.removeEventListener('canplay', good);
       v.removeEventListener('error', bad);
       resolve(ok);
     };
     const good = () => end(true), bad = () => end(false);
     const timer = setTimeout(() => end(false), timeoutMs);
-    v.addEventListener('loadedmetadata', good);
-    v.addEventListener('error', bad);
+    // Metadata alone does not prove the browser can decode and play the stream.
+    v.addEventListener('canplay', good, { once: true });
+    v.addEventListener('error', bad, { once: true });
+    v.preload = 'auto';
     v.src = url;
     v.load();
   });
@@ -1269,7 +1271,26 @@ async function enterFast() {
   v.addEventListener('error', () => {
     if (fastV === v) showMsg('Fast mode lost the video. Press Fast to go back to the normal player.');
   });
-  if (playing) v.play().catch(() => {}); else onState({ data: 2 });
+  if (playing) {
+    // The provider lookup is asynchronous, so the original tap's autoplay
+    // permission may have expired. Start muted (allowed by mobile browsers),
+    // then restore the user's volume as soon as playback begins.
+    const wantedMuted = muted;
+    const wantedVolume = Math.min(1, Math.max(0, volume / 100));
+    v.muted = true;
+    try {
+      await v.play();
+      v.volume = wantedVolume;
+      v.muted = wantedMuted;
+      syncVolUI();
+    } catch (error) {
+      console.warn('[LiteTube] Fast stream autoplay was blocked', error);
+      toast('Fast mode loaded, but playback was blocked. Tap Play to start.');
+      onState({ data: 2 });
+    }
+  } else {
+    onState({ data: 2 });
+  }
   toast('Fast mode on. Speeds up to 4x.');
 }
 
