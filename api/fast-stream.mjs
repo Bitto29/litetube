@@ -270,7 +270,7 @@ export default {
     }
 
     const id = (url.searchParams.get('id') || '').trim();
-    if (!/^[\\w-]{11}$/.test(id)) {
+    if (!/^[\w-]{11}$/.test(id)) {
       return json({ ok: false, error: 'A valid 11-character YouTube video ID is required.' }, 400);
     }
 
