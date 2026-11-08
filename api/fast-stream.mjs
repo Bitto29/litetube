@@ -31,12 +31,15 @@ const QKEY = {
 
 let innertubePromise = null;
 
-function sendJson(res, body, status = 200) {
-  res.statusCode = status;
-  res.setHeader('content-type', 'application/json; charset=utf-8');
-  res.setHeader('cache-control', 'no-store');
-  res.setHeader('x-content-type-options', 'nosniff');
-  res.end(JSON.stringify(body));
+function json(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff'
+    }
+  });
 }
 
 function normalizeBase(value) {
@@ -260,70 +263,67 @@ async function queryInvidious(base, id) {
   }
 }
 
-export default async function handler(req, res) {
-  if (req.method !== 'GET') {
-    res.setHeader('allow', 'GET');
-    return sendJson(res, { ok: false, error: 'GET requests only.' }, 405);
-  }
-
-  let id = '';
-  try {
-    const requestUrl = new URL(req.url || '/', 'https://litetube.local');
-    id = String((req.query && req.query.id) || requestUrl.searchParams.get('id') || '').trim();
-  } catch {}
-
-  if (!/^[\w-]{11}$/.test(id)) {
-    return sendJson(res, { ok: false, error: 'A valid 11-character YouTube video ID is required.' }, 400);
-  }
-
-  const directPromise = queryYouTubeDirect(id);
-  const direct = await Promise.race([directPromise, waitFor(4800)]);
-  const youtubeDiagnostics = direct && direct.diagnostics
-    ? direct.diagnostics
-    : direct && direct.reason
-      ? [{ provider: 'YouTube', host: 'youtube.com', reason: direct.reason }]
-      : [];
-
-  if (direct && direct.streams && direct.streams.length) {
-    return sendJson(res, { ok: true, candidates: [direct], diagnostics: [] });
-  }
-
-  try {
-    const [pipedBases, invidiousBases] = await Promise.all([getPipedBases(), getInvidiousBases()]);
-    const checks = await Promise.all([
-      ...pipedBases.slice(0, 6).map(base => queryPiped(base, id)),
-      ...invidiousBases.slice(0, 6).map(base => queryInvidious(base, id))
-    ]);
-
-    const piped = checks.filter(x => x.provider === 'Piped' && Array.isArray(x.streams)).slice(0, 2);
-    const invidious = checks.filter(x => x.provider === 'Invidious' && Array.isArray(x.streams)).slice(0, 2);
-    const candidates = [];
-    for (let i = 0; i < Math.max(piped.length, invidious.length); i++) {
-      if (piped[i]) candidates.push(piped[i]);
-      if (invidious[i]) candidates.push(invidious[i]);
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (request.method !== 'GET') {
+      return json({ ok: false, error: 'GET requests only.' }, 405);
     }
 
-    const diagnostics = youtubeDiagnostics.concat(
-      checks.filter(x => !Array.isArray(x.streams))
-        .map(x => ({ provider: x.provider, host: x.host, reason: x.reason }))
-    ).slice(0, 18);
+    const id = (url.searchParams.get('id') || '').trim();
+    if (!/^[\\w-]{11}$/.test(id)) {
+      return json({ ok: false, error: 'A valid 11-character YouTube video ID is required.' }, 400);
+    }
 
-    if (!candidates.length) {
-      console.error('[LiteTube Fast API] No source returned usable streams', diagnostics);
-      return sendJson(res, {
+    const directPromise = queryYouTubeDirect(id);
+    const direct = await Promise.race([directPromise, waitFor(4800)]);
+    const youtubeDiagnostics = direct && direct.diagnostics
+      ? direct.diagnostics
+      : direct && direct.reason
+        ? [{ provider: 'YouTube', host: 'youtube.com', reason: direct.reason }]
+        : [];
+
+    if (direct && direct.streams && direct.streams.length) {
+      return json({ ok: true, candidates: [direct], diagnostics: [] });
+    }
+
+    try {
+      const [pipedBases, invidiousBases] = await Promise.all([getPipedBases(), getInvidiousBases()]);
+      const checks = await Promise.all([
+        ...pipedBases.slice(0, 6).map(base => queryPiped(base, id)),
+        ...invidiousBases.slice(0, 6).map(base => queryInvidious(base, id))
+      ]);
+
+      const piped = checks.filter(x => x.provider === 'Piped' && Array.isArray(x.streams)).slice(0, 2);
+      const invidious = checks.filter(x => x.provider === 'Invidious' && Array.isArray(x.streams)).slice(0, 2);
+      const candidates = [];
+      for (let i = 0; i < Math.max(piped.length, invidious.length); i++) {
+        if (piped[i]) candidates.push(piped[i]);
+        if (invidious[i]) candidates.push(invidious[i]);
+      }
+
+      const diagnostics = youtubeDiagnostics.concat(
+        checks.filter(x => !Array.isArray(x.streams))
+          .map(x => ({ provider: x.provider, host: x.host, reason: x.reason }))
+      ).slice(0, 18);
+
+      if (!candidates.length) {
+        console.error('[LiteTube Fast API] No source returned usable streams', diagnostics);
+        return json({
+          ok: false,
+          error: 'No playable stream data was returned by YouTube or the public provider mirrors.',
+          diagnostics
+        }, 503);
+      }
+
+      return json({ ok: true, candidates, diagnostics });
+    } catch (error) {
+      return json({
         ok: false,
-        error: 'No playable stream data was returned by YouTube or the public provider mirrors.',
-        diagnostics
-      }, 503);
+        error: 'The server-side stream lookup failed. Please retry shortly.',
+        detail: String(error && error.message || 'unknown error').slice(0, 120),
+        diagnostics: youtubeDiagnostics
+      }, 502);
     }
-
-    return sendJson(res, { ok: true, candidates, diagnostics });
-  } catch (error) {
-    return sendJson(res, {
-      ok: false,
-      error: 'The server-side stream lookup failed. Please retry shortly.',
-      detail: String(error && error.message || 'unknown error').slice(0, 120),
-      diagnostics: youtubeDiagnostics
-    }, 502);
   }
-}
+};
