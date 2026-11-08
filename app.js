@@ -1109,7 +1109,12 @@ async function fastOpen(id, v) {
       detail: payload && payload.detail,
       diagnostics
     });
-    const shortDetails = diagnostics.slice(0, 3).map(d => {
+    // Show mirror failures first. YouTube's three client variants often repeat
+    // the same LOGIN_REQUIRED error and otherwise hide the useful mirror diagnostics.
+    const orderedDiagnostics = diagnostics
+      .slice()
+      .sort((a, b) => Number(a.provider === 'YouTube') - Number(b.provider === 'YouTube'));
+    const shortDetails = orderedDiagnostics.slice(0, 6).map(d => {
       const source = [d.provider, d.host].filter(Boolean).join(' ');
       return source + ': ' + (d.reason || 'unavailable');
     }).join(' · ');
