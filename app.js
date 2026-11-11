@@ -414,25 +414,49 @@ function syncVolUI() {
   els.vol.value = m ? 0 : volume;
 }
 
+/* Speed Bridge: the optional LiteTube extension forces the real <video> rate inside the YouTube embed */
+let bridgeSeq = 0, bridgeActive = false;
+const bridgePending = new Map();
+window.addEventListener('message', e => {
+  if (e.source !== window || e.origin !== location.origin) return;
+  const d = e.data;
+  if (!d || d.source !== 'litetube-speed-bridge' || d.type !== 'RATE_RESULT') return;
+  const cb = bridgePending.get(d.requestId);
+  if (cb) { bridgePending.delete(d.requestId); cb(d); }
+});
+function bridgeSetRate(speed) {
+  return new Promise(resolve => {
+    const id = 'r' + (++bridgeSeq);
+    const t = setTimeout(() => { bridgePending.delete(id); resolve({ ok: false, reason: 'no-extension' }); }, 900);
+    bridgePending.set(id, d => { clearTimeout(t); resolve(d); });
+    window.postMessage({ source: 'litetube-app', type: 'SET_RATE', requestId: id, rate: speed, required: true }, location.origin);
+  });
+}
+
 function applyPlaybackRate(speed) {
   if (!ready || !player || !player.setPlaybackRate) return;
   try { player.setPlaybackRate(speed); }
-  catch { toast('This YouTube player does not accept that playback speed.'); return; }
+  catch { /* embed refused; the bridge may still handle it */ }
 
-  if (speed > 2) {
+  if (speed > 2 || bridgeActive) {
     const requested = speed;
-    setTimeout(() => {
-      if (!ready || !player || rate !== requested || fastOn) return;
+    bridgeSetRate(speed).then(res => {
+      if (res && res.ok) {
+        bridgeActive = true;
+        if (speed > 2) toast('Speed ' + speed + 'x');
+        return;
+      }
+      if (!ready || !player || rate !== requested || fastOn || speed <= 2) return;
       let actual = 0;
       try { actual = player.getPlaybackRate ? Number(player.getPlaybackRate()) : 0; } catch {}
       if (actual && actual + 0.01 < requested) {
-        toast('YouTube limited this embed to ' + actual + 'x. This player does not allow ' + requested + 'x.');
+        toast('YouTube limited this embed to ' + actual + 'x. Install the LiteTube Speed Bridge extension for ' + requested + 'x.');
         rate = actual;
         store.set('rate', rate);
         els.speed.value = String(rate);
         els.fast.classList.remove('active');
       }
-    }, 900);
+    });
   }
 }
 
