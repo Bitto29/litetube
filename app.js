@@ -358,7 +358,7 @@ function updateProgress(force) {
   const txt = fmt(shown) + ' / ' + fmt(dur);
   if (txt !== lastTxt) { els.time.textContent = txt; lastTxt = txt; }
 }
-function startTick() { if (!tick && !document.hidden) tick = setInterval(updateProgress, 250); }
+function startTick() { if (!tick && !document.hidden) tick = setInterval(updateProgress, 500); }
 function stopTick() { clearInterval(tick); tick = null; }
 
 document.addEventListener('visibilitychange', () => {
