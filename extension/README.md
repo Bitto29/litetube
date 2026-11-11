@@ -17,7 +17,7 @@ The YouTube iframe is cross-origin, so LiteTube's site JavaScript cannot directl
 
 ## Notes
 
-- This version is explicitly scoped to `litetube29.vercel.app` and `www.youtube-nocookie.com`.
+- This version supports both `litetube-xi.vercel.app` and `litetube29.vercel.app`, plus their listed Vercel project aliases, and `www.youtube-nocookie.com`.
 - The extension does not defeat login checks, DRM, or video access restrictions. It only changes playback speed of a video that the embedded YouTube player is already playing.
 - If you use another LiteTube domain, the extension manifest's host permissions and content-script match must be updated.
 - If the site has changed, reload the unpacked extension on `chrome://extensions` and refresh LiteTube.
