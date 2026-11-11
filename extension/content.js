@@ -12,8 +12,7 @@
   ]);
   const isLiteTube = isTopFrame && LITETUBE_HOSTS.has(location.hostname);
 
-  // Only the top LiteTube document relays the page's requested speed to the
-  // extension worker. The web page cannot access chrome.runtime itself.
+  // The LiteTube page only relays speed changes. It never polls the player.
   if (isTopFrame && isLiteTube) {
     window.addEventListener('message', event => {
       if (event.source !== window || event.origin !== location.origin) return;
@@ -42,13 +41,11 @@
     return;
   }
 
-  // Only operate inside YouTube embed frames; don't alter arbitrary videos on
-  // other sites. HTMLMediaElement.playbackRate is the real media playback rate.
+  // Only operate inside YouTube embed frames.
   if (isTopFrame || location.hostname !== 'www.youtube-nocookie.com') return;
 
   let desiredRate = null;
   let observer = null;
-  let interval = null;
   const tracked = new WeakSet();
 
   function setVideoRate(video) {
@@ -59,29 +56,39 @@
     } catch {}
   }
 
-  function scanVideos() {
-    document.querySelectorAll('video').forEach(video => {
-      if (!tracked.has(video)) {
-        tracked.add(video);
-        video.addEventListener('ratechange', () => {
-          if (desiredRate == null || Math.abs(video.playbackRate - desiredRate) <= 0.015) return;
-          setTimeout(() => setVideoRate(video), 0);
-        });
-        video.addEventListener('loadedmetadata', () => setVideoRate(video));
-        video.addEventListener('playing', () => setVideoRate(video));
-      }
+  function trackVideo(video) {
+    if (!(video instanceof HTMLVideoElement) || tracked.has(video)) return;
+    tracked.add(video);
+    video.addEventListener('ratechange', () => {
+      if (desiredRate == null || Math.abs(video.playbackRate - desiredRate) <= 0.015) return;
       setVideoRate(video);
     });
+    // Apply the requested rate when YouTube prepares or starts a new stream.
+    ['loadedmetadata', 'loadeddata', 'canplay', 'playing'].forEach(type => {
+      video.addEventListener(type, () => setVideoRate(video), { passive: true });
+    });
+    setVideoRate(video);
+  }
+
+  function scanAdded(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+    if (node.matches && node.matches('video')) trackVideo(node);
+    if (node.querySelectorAll) node.querySelectorAll('video').forEach(trackVideo);
   }
 
   function setDesiredRate(rate) {
     desiredRate = Math.min(4, Math.max(0.25, Number(rate) || 1));
-    scanVideos();
+    // One initial scan, then only inspect newly inserted DOM nodes. No
+    // permanent polling loop and no repeated whole-document query.
+    document.querySelectorAll('video').forEach(trackVideo);
     if (!observer && document.documentElement) {
-      observer = new MutationObserver(scanVideos);
+      observer = new MutationObserver(records => {
+        for (const record of records) {
+          record.addedNodes.forEach(scanAdded);
+        }
+      });
       observer.observe(document.documentElement, { childList: true, subtree: true });
     }
-    if (!interval) interval = setInterval(scanVideos, 250);
     return true;
   }
 
