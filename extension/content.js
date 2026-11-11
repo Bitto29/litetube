@@ -81,7 +81,7 @@
       observer = new MutationObserver(scanVideos);
       observer.observe(document.documentElement, { childList: true, subtree: true });
     }
-    if (!interval) interval = setInterval(scanVideos, 500);
+    if (!interval) interval = setInterval(scanVideos, 250);
     return true;
   }
 
