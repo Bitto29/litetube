@@ -12,7 +12,7 @@
 <meta name="google-site-verification" content="pAbeSvTn_Opp7CxkwNaxyQWKKzQlp_HV4J2wI0PFzHc" />
 
 <!-- Basic SEO -->
-<meta name="description" content="LiteTube is a fast, lightweight YouTube player for slow computers. Paste a link, get YouTube-style controls, speed up to 3x, a floating picture-in-picture window, and saved links.">
+<meta name="description" content="LiteTube is a fast, lightweight YouTube player for slow computers. Paste a link, get YouTube-style controls, speed up to 4x with the optional browser extension, a floating picture-in-picture window, and saved links.">
 <meta name="keywords" content="lightweight youtube player, youtube player for low end pc, youtube lite, youtube picture in picture, document picture-in-picture, youtube speed control, save youtube links, fast youtube player">
 <meta name="author" content="Basit Iqbal Bitto">
 <meta name="robots" content="index, follow, max-image-preview:large">
@@ -25,7 +25,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="LiteTube">
 <meta property="og:title" content="LiteTube - Lightweight YouTube Player for Slow PCs">
-<meta property="og:description" content="Paste a YouTube link and watch with a light page, full controls, up to 3x speed, a floating window and saved links.">
+<meta property="og:description" content="Paste a YouTube link and watch with a light page, full controls, up to 4x speed with the optional browser extension, a floating window and saved links.">
 <meta property="og:url" content="https://YOUR-SITE-URL/">
 <meta property="og:image" content="https://i.postimg.cc/3R1r462J/img29-edit.png">
 <meta property="og:image:alt" content="LiteTube lightweight YouTube player preview">
@@ -105,9 +105,10 @@
             <span id="time" class="time">0:00 / 0:00</span>
             <span class="spacer"></span>
             <select id="speed" title="Speed (&lt; &gt;)" aria-label="Speed"></select>
+            <a id="speedHelp" class="speed-help" href="https://github.com/Bitto29/litetube/tree/main/extension" target="_blank" rel="noopener" title="Install LiteTube Speed Bridge to enable speeds from 2.25x to 4x" hidden>Enable 4×</a>
             <select id="quality" title="Quality" aria-label="Quality"></select>
             <button id="btnLoop" class="btn" type="button" title="Loop (r)"><svg viewBox="0 0 24 24"><path d=""/></svg></button>
-            <button id="btnFast" class="btn txt" type="button" title="Request playback above 2x from the YouTube player (g)">Fast</button>
+            <button id="btnFast" class="btn txt" type="button" title="Legacy Fast Mode disabled" hidden>Fast</button>
             <button id="btnPip" class="btn" type="button" title="Floating window (i)"><svg viewBox="0 0 24 24"><path d=""/></svg></button>
             <button id="btnTheater" class="btn" type="button" title="Theater mode (t)"><svg viewBox="0 0 24 24"><path d=""/></svg></button>
             <button id="btnFull" class="btn" type="button" title="Fullscreen (f)"><svg viewBox="0 0 24 24"><path d=""/></svg></button>
@@ -155,7 +156,7 @@
         <li><kbd>0</kbd>-<kbd>9</kbd> jump to 0-90%, <kbd>Home</kbd> <kbd>End</kbd></li>
         <li><kbd>&lt;</kbd> <kbd>&gt;</kbd> speed, <kbd>R</kbd> loop</li>
         <li><kbd>F</kbd> fullscreen, <kbd>T</kbd> theater, <kbd>I</kbd> floating window</li>
-        <li><kbd>G</kbd> fast mode (higher speeds, uses public servers)</li>
+        <li>Speeds above 2× need the optional LiteTube Speed Bridge extension.</li>
         <li><kbd>S</kbd> save or unsave this link</li>
       </ul>
     </details>
