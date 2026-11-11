@@ -2,7 +2,15 @@
   'use strict';
 
   const isTopFrame = window.top === window;
-  const isLiteTube = location.hostname === 'litetube29.vercel.app';
+  const LITETUBE_HOSTS = new Set([
+    'litetube-xi.vercel.app',
+    'litetube29.vercel.app',
+    'litetube-bitto29s-projects.vercel.app',
+    'litetube-git-main-bitto29s-projects.vercel.app',
+    'litetube29-bitto29s-projects.vercel.app',
+    'litetube29-git-main-bitto29s-projects.vercel.app'
+  ]);
+  const isLiteTube = isTopFrame && LITETUBE_HOSTS.has(location.hostname);
 
   // Only the top LiteTube document relays the page's requested speed to the
   // extension worker. The web page cannot access chrome.runtime itself.
