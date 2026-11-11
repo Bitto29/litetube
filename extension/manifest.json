@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LiteTube Speed Bridge",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Enables LiteTube playback speed up to 4x inside the YouTube embed.",
   "host_permissions": [
     "https://*.vercel.app/*",
