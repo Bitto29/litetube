@@ -12,7 +12,7 @@ const els = {
   mute: $('btnMute'), vol: $('vol'), time: $('time'), speed: $('speed'),
   quality: $('quality'), loop: $('btnLoop'), pip: $('btnPip'),
   theater: $('btnTheater'), full: $('btnFull'), title: $('title'),
-  toast: $('toast'), badge: $('badge'), fileWarn: $('fileWarn'),
+  toast: $('toast'), badge: $('badge'), fileWarn: $('fileWarn'), speedHelp: $('speedHelp'),
   save: $('btnSave'), fast: $('btnFast'), savedList: $('savedList'), savedEmpty: $('savedEmpty'), savedCount: $('savedCount')
 };
 
@@ -427,36 +427,47 @@ window.addEventListener('message', e => {
 function bridgeSetRate(speed) {
   return new Promise(resolve => {
     const id = 'r' + (++bridgeSeq);
-    const t = setTimeout(() => { bridgePending.delete(id); resolve({ ok: false, reason: 'no-extension' }); }, 900);
+    const t = setTimeout(() => { bridgePending.delete(id); resolve({ ok: false, reason: 'no-extension' }); }, 2200);
     bridgePending.set(id, d => { clearTimeout(t); resolve(d); });
     window.postMessage({ source: 'litetube-app', type: 'SET_RATE', requestId: id, rate: speed, required: true }, location.origin);
   });
 }
 
+let bridgeHintShown = false;
 function applyPlaybackRate(speed) {
   if (!ready || !player || !player.setPlaybackRate) return;
-  try { player.setPlaybackRate(speed); }
-  catch { /* embed refused; the bridge may still handle it */ }
+
+  // The official iframe player normally exposes speeds up to 2x. Use that
+  // native limit while the optional extension applies higher rates directly
+  // to the real <video> element inside the cross-origin YouTube frame.
+  const nativeRate = Math.min(speed, 2);
+  try { player.setPlaybackRate(nativeRate); } catch {}
 
   if (speed > 2 || bridgeActive) {
     const requested = speed;
     bridgeSetRate(speed).then(res => {
+      if (!ready || !player || rate !== requested || fastOn) return;
       if (res && res.ok) {
         bridgeActive = true;
+        bridgeHintShown = false;
+        if (els.speedHelp) els.speedHelp.hidden = true;
         if (speed > 2) toast('Speed ' + speed + 'x');
         return;
       }
-      if (!ready || !player || rate !== requested || fastOn || speed <= 2) return;
-      let actual = 0;
-      try { actual = player.getPlaybackRate ? Number(player.getPlaybackRate()) : 0; } catch {}
-      if (actual && actual + 0.01 < requested) {
-        toast('YouTube limited this embed to ' + actual + 'x. Install the LiteTube Speed Bridge extension for ' + requested + 'x.');
-        rate = actual;
-        store.set('rate', rate);
-        els.speed.value = String(rate);
-        els.fast.classList.remove('active');
+
+      bridgeActive = false;
+      if (speed > 2) {
+        if (els.speedHelp) els.speedHelp.hidden = false;
+        if (!bridgeHintShown) {
+          toast('For ' + speed + 'x, install LiteTube Speed Bridge and refresh this page.');
+          bridgeHintShown = true;
+        }
+      } else if (els.speedHelp) {
+        els.speedHelp.hidden = true;
       }
     });
+  } else if (els.speedHelp) {
+    els.speedHelp.hidden = true;
   }
 }
 
@@ -1785,7 +1796,6 @@ document.addEventListener('keydown', e => {
     case 'f': case 'F': toggleFull(); break;
     case 't': case 'T': toggleTheater(); break;
     case 'i': case 'I': togglePip(); break;
-    case 'g': case 'G': toggleFast(); break;
     case 'r': case 'R': toggleLoop(); break;
     case 's': case 'S': toggleSave(); break;
     case '<': stepSpeed(-1); break;
