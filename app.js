@@ -669,9 +669,16 @@ async function yt(path, params) {
   return data;
 }
 
+const validVideoId = id => typeof id === 'string' && /^[A-Za-z0-9_-]{11}$/.test(id);
 const curVid = () => {
-  const d = ready && player.getVideoData ? player.getVideoData() : null;
-  return (d && d.video_id) || null;
+  const d = ready && player && player.getVideoData ? player.getVideoData() : null;
+  const candidates = [
+    fastOn && fastMeta && fastMeta.id,
+    d && d.video_id,
+    lastVid,
+    current && current.id
+  ];
+  return candidates.find(validVideoId) || null;
 };
 
 function chipBtn(text, onClick) {
@@ -895,15 +902,41 @@ async function infoLiteTube(id) {
 }
 
 async function getInfo(id) {
+  let googleInfo = null;
+  let serverError = null;
+  let browserError = null;
+
+  // Keep the official Data API as the first choice when a key is configured.
   if (getKey()) {
-    try { return await infoGoogle(id); }
-    catch (error) {
-      // A missing/limited API key should not prevent the public metadata fallback.
-      try { return await infoLiteTube(id); }
-      catch { throw error; }
+    try {
+      googleInfo = await infoGoogle(id);
+      if (googleInfo.description) return googleInfo;
+    } catch (error) {
+      serverError = error;
     }
   }
-  return infoLiteTube(id);
+
+  // Server-side lookup can reach metadata mirrors without browser CORS limits.
+  try {
+    const info = await infoLiteTube(id);
+    if (info.description) return Object.assign({}, googleInfo || {}, info);
+    if (googleInfo) return googleInfo;
+  } catch (error) {
+    serverError = error;
+  }
+
+  // Retain the old browser-side Invidious route as a last-resort fallback.
+  try {
+    const info = await infoInv(id);
+    if (info.description) return Object.assign({}, googleInfo || {}, info);
+    if (googleInfo) return googleInfo;
+    return info;
+  } catch (error) {
+    browserError = error;
+  }
+
+  if (googleInfo) return googleInfo;
+  throw browserError || serverError || new Error('Could not load this video description. Please try again.');
 }
 const getComments = (id, sort, tok) => getKey() ? commentsGoogle(id, sort, tok) : commentsInv(id, sort, tok);
 
@@ -1811,8 +1844,10 @@ document.addEventListener('keydown', e => {
     case 'ArrowRight': seekBy(5); break;
     case 'j': case 'J': seekBy(-10); break;
     case 'l': case 'L': seekBy(10); break;
-    case 'ArrowUp': setVolume(volume + 5); break;
-    case 'ArrowDown': setVolume(volume - 5); break;
+    case 'ArrowUp': stepSpeed(1); break;
+    case 'ArrowDown': stepSpeed(-1); break;
+    case '+': case '=': setVolume(volume + 5); break;
+    case '-': case '_': setVolume(volume - 5); break;
     case 'm': case 'M': toggleMute(); break;
     case 'f': case 'F': toggleFull(); break;
     case 't': case 'T': toggleTheater(); break;
