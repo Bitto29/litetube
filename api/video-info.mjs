@@ -82,7 +82,7 @@ export default {
     const url = new URL(request.url);
     if (request.method !== 'GET') return json({ ok: false, error: 'GET requests only.' }, 405);
     const id = (url.searchParams.get('id') || '').trim();
-    if (!/^[\\w-]{11}$/.test(id)) return json({ ok: false, error: 'A valid 11-character YouTube video ID is required.' }, 400);
+    if (!/^[A-Za-z0-9_-]{11}$/.test(id)) return json({ ok: false, error: 'A valid 11-character YouTube video ID is required.' }, 400);
 
     const tasks = [
       fromYouTube(id).catch(() => null),
