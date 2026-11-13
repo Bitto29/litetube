@@ -883,7 +883,28 @@ async function commentsInv(id, sort, token) {
   };
 }
 
-const getInfo = id => getKey() ? infoGoogle(id) : infoInv(id);
+async function infoLiteTube(id) {
+  const url = new URL('/api/video-info', location.origin);
+  url.searchParams.set('id', id);
+  const response = await fetchT(url.href, 16000);
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || !payload.ok || !payload.info) {
+    throw new Error(payload && payload.error || 'Could not load this video description. Please try again.');
+  }
+  return payload.info;
+}
+
+async function getInfo(id) {
+  if (getKey()) {
+    try { return await infoGoogle(id); }
+    catch (error) {
+      // A missing/limited API key should not prevent the public metadata fallback.
+      try { return await infoLiteTube(id); }
+      catch { throw error; }
+    }
+  }
+  return infoLiteTube(id);
+}
 const getComments = (id, sort, tok) => getKey() ? commentsGoogle(id, sort, tok) : commentsInv(id, sort, tok);
 
 /* ---------- Description ---------- */
