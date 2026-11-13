@@ -920,7 +920,6 @@ async function getInfo(id) {
   try {
     const info = await infoLiteTube(id);
     if (info.description) return Object.assign({}, googleInfo || {}, info);
-    if (googleInfo) return googleInfo;
   } catch (error) {
     serverError = error;
   }
