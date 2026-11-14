@@ -451,7 +451,7 @@ function applyPlaybackRate(speed) {
         bridgeActive = true;
         bridgeHintShown = false;
         if (els.speedHelp) els.speedHelp.hidden = true;
-        if (speed > 2) toast('Speed ' + speed + 'x');
+        // Do not show an automatic toast when a saved speed is restored.
         return;
       }
 
