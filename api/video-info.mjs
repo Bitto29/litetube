@@ -13,7 +13,7 @@ const json = (body, status=200) => new Response(JSON.stringify(body), {
   status, headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}
 });
 
-async function fetchText(url, timeout=5000, headers={}) {
+async function fetchText(url, timeout=3800, headers={}) {
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),timeout);
   try {
@@ -42,7 +42,7 @@ function normalize(data) {
   return {channel,views,date,description,hasDescription:!!description.trim()};
 }
 async function fromYouTubePage(id) {
-  const html=await fetchText('https://www.youtube.com/watch?v='+encodeURIComponent(id)+'&hl=en',6500);
+  const html=await fetchText('https://www.youtube.com/watch?v='+encodeURIComponent(id)+'&hl=en',4500);
   const match=html.match(/"shortDescription"\s*:\s*"((?:\\.|[^"\\])*)"/);
   let description=match?decodeJsonString(match[1]):'';
   if(!description) {
@@ -54,8 +54,8 @@ async function fromYouTubePage(id) {
   return normalize({description,author:author?decodeJsonString(author):'',view_count:views?Number(views):null});
 }
 async function fromYouTubei(id) {
-  const yt=await Innertube.create({generate_session_locally:true});
-  const info=await yt.getBasicInfo(id);
+  const work=(async()=>{const yt=await Innertube.create({generate_session_locally:true});return await yt.getBasicInfo(id);})();
+  const info=await Promise.race([work,new Promise((_,reject)=>setTimeout(()=>reject(new Error('YouTube player metadata timed out')),4500))]);
   const b=info.basic_info||{};
   return normalize({description:b.short_description||b.description||'',author:b.author||b.owner?.name||'',view_count:b.view_count,published:b.start_timestamp});
 }
@@ -67,8 +67,8 @@ async function fromInvidious(base,id) {
 }
 async function discoverInstances() {
   const [inv,piped]=await Promise.allSettled([
-    fetchJson('https://api.invidious.io/instances.json?sort_by=health',3000),
-    fetchJson('https://piped-instances.kavin.rocks/',3000)
+    fetchJson('https://api.invidious.io/instances.json?sort_by=health',1800),
+    fetchJson('https://piped-instances.kavin.rocks/',1800)
   ]);
   const invList=[];
   if(inv.status==='fulfilled'&&Array.isArray(inv.value)) {
@@ -88,8 +88,8 @@ async function discoverInstances() {
     }
   }
   return {
-    inv:[...new Set([...invList,...FALLBACK_INV])].slice(0,12),
-    piped:[...new Set([...pipedList,...FALLBACK_PIPED])].slice(0,12)
+    inv:[...new Set([...invList,...FALLBACK_INV])].slice(0,8),
+    piped:[...new Set([...pipedList,...FALLBACK_PIPED])].slice(0,8)
   };
 }
 
