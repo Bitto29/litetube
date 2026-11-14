@@ -111,7 +111,7 @@ function loadAPI() {
 /* ------------------------------------------------------------------ *
  *  State
  * ------------------------------------------------------------------ */
-const SPEEDS = [0.25, 0.5, 0.75, 0.85, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.5, 4];
+const SPEEDS = [0.25, 0.5, 0.75, 0.85, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4];
 let speedList = SPEEDS;      // longer in fast mode
 const QL = { hd2160: '2160p', hd1440: '1440p', hd1080: '1080p', hd720: '720p', large: '480p', medium: '360p', small: '240p', tiny: '144p' };
 const DEFAULT_LEVELS = ['hd1080', 'hd720', 'large', 'medium', 'small', 'tiny'];
@@ -929,7 +929,7 @@ async function getInfo(id) {
     const info = await infoInv(id);
     if (info.description) return Object.assign({}, googleInfo || {}, info);
     if (googleInfo) return googleInfo;
-    return info;
+    throw new Error('This provider returned video details but no description.');
   } catch (error) {
     browserError = error;
   }
