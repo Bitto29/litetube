@@ -928,13 +928,13 @@ async function getInfo(id) {
   try {
     const info = await infoInv(id);
     if (info.description) return Object.assign({}, googleInfo || {}, info);
-    if (googleInfo) return googleInfo;
+    if (googleInfo && googleInfo.description) return googleInfo;
     throw new Error('This provider returned video details but no description.');
   } catch (error) {
     browserError = error;
   }
 
-  if (googleInfo) return googleInfo;
+  if (googleInfo && googleInfo.description) return googleInfo;
   throw browserError || serverError || new Error('Could not load this video description. Please try again.');
 }
 const getComments = (id, sort, tok) => getKey() ? commentsGoogle(id, sort, tok) : commentsInv(id, sort, tok);
