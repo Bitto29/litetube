@@ -458,10 +458,8 @@ function applyPlaybackRate(speed) {
       bridgeActive = false;
       if (speed > 2) {
         if (els.speedHelp) els.speedHelp.hidden = false;
-        if (!bridgeHintShown) {
-          toast('For ' + speed + 'x, install LiteTube Speed Bridge and refresh this page.');
-          bridgeHintShown = true;
-        }
+        // Keep the download link available without interrupting the page.
+        bridgeHintShown = true;
       } else if (els.speedHelp) {
         els.speedHelp.hidden = true;
       }
@@ -910,7 +908,7 @@ async function getInfo(id) {
   if (getKey()) {
     try {
       googleInfo = await infoGoogle(id);
-      if (googleInfo.description) return googleInfo;
+      if (hasRealDescription(googleInfo.description)) return googleInfo;
     } catch (error) {
       serverError = error;
     }
@@ -919,7 +917,7 @@ async function getInfo(id) {
   // Server-side lookup can reach metadata mirrors without browser CORS limits.
   try {
     const info = await infoLiteTube(id);
-    if (info.description) return Object.assign({}, googleInfo || {}, info);
+    if (hasRealDescription(info.description)) return Object.assign({}, googleInfo || {}, info);
   } catch (error) {
     serverError = error;
   }
@@ -927,15 +925,19 @@ async function getInfo(id) {
   // Retain the old browser-side Invidious route as a last-resort fallback.
   try {
     const info = await infoInv(id);
-    if (info.description) return Object.assign({}, googleInfo || {}, info);
-    if (googleInfo && googleInfo.description) return googleInfo;
+    if (hasRealDescription(info.description)) return Object.assign({}, googleInfo || {}, info);
+    if (googleInfo && hasRealDescription(googleInfo.description)) return googleInfo;
     throw new Error('This provider returned video details but no description.');
   } catch (error) {
     browserError = error;
   }
 
-  if (googleInfo && googleInfo.description) return googleInfo;
+  if (googleInfo && hasRealDescription(googleInfo.description)) return googleInfo;
   throw browserError || serverError || new Error('Could not load this video description. Please try again.');
+}
+function hasRealDescription(value) {
+  const text = String(value || '').trim();
+  return !!text && !/^enjoy the videos and music you love,? upload original content,? and share it all with friends, family, and the world on youtube\.?$/i.test(text);
 }
 const getComments = (id, sort, tok) => getKey() ? commentsGoogle(id, sort, tok) : commentsInv(id, sort, tok);
 
