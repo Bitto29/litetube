@@ -73,6 +73,16 @@
   <div id="empty" class="empty">
     <h1>Watch YouTube without the weight</h1>
     <p>Paste a link above. The page loads nothing else until you press Play.</p>
+    <div class="extension-promo">
+      <strong>Want playback speeds up to 4×?</strong>
+      <p>Install LiteTube Speed Bridge for Chrome or Edge on desktop.</p>
+      <a class="extension-download" href="/api/extension-download" download>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg>
+        Download Extension
+      </a>
+      <a class="extension-guide" href="https://github.com/Bitto29/litetube/tree/main/extension" target="_blank" rel="noopener">Installation instructions</a>
+      <p class="extension-note">Desktop Chrome / Edge only. Extract the ZIP, open the browser's Extensions page, enable Developer mode, then choose Load unpacked and select the LiteTube-Speed-Bridge folder.</p>
+    </div>
     <p id="fileWarn" class="warn" hidden>
       This page was opened from a file. YouTube refuses to play in that case.
       Host it (GitHub Pages, Vercel, Cloudflare Pages) or run a local server.
@@ -105,7 +115,7 @@
             <span id="time" class="time">0:00 / 0:00</span>
             <span class="spacer"></span>
             <select id="speed" title="Speed (&lt; &gt;)" aria-label="Speed"></select>
-            <a id="speedHelp" class="speed-help" href="https://github.com/Bitto29/litetube/tree/main/extension" target="_blank" rel="noopener" title="Install LiteTube Speed Bridge to enable speeds from 2.25x to 4x" hidden>Enable 4×</a>
+            <a id="speedHelp" class="speed-help" href="/api/extension-download" title="Download LiteTube Speed Bridge for speeds above 2×" hidden>Get extension</a>
             <select id="quality" title="Quality" aria-label="Quality"></select>
             <button id="btnLoop" class="btn" type="button" title="Loop (r)"><svg viewBox="0 0 24 24"><path d=""/></svg></button>
             <button id="btnFast" class="btn txt" type="button" title="Legacy Fast Mode disabled" hidden>Fast</button>
