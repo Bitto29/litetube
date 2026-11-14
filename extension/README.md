@@ -13,7 +13,7 @@ The YouTube iframe is cross-origin, so LiteTube's site JavaScript cannot directl
 3. Turn on **Developer mode**.
 4. Choose **Load unpacked** and select the extracted `extension` folder. To update an existing install, open its card and click **Reload**.
 5. Refresh the same LiteTube address you normally use with **Ctrl + Shift + R**. Supported addresses include https://litetube29.vercel.app/ and https://litetube-xi.vercel.app/.
-6. Play a video, then choose **2.25×, 2.5×, 2.75×, 3×, 3.5×, or 4×** from the normal speed selector.
+6. Play a video, then choose **2.25×, 2.5×, 2.75×, 3×, 3.25×, 3.5×, 3.75×, or 4×** from the normal speed selector.
 
 ## Notes
 
