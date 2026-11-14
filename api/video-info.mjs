@@ -31,7 +31,8 @@ function decodeJsonString(value) {
 }
 function normalize(data) {
   if(!data || typeof data!=='object') return null;
-  const description=typeof data.description==='string'?data.description:'';
+  const rawDescription=typeof data.description==='string'?data.description:'';
+  const description=/^enjoy the videos and music you love,? upload original content,? and share it all with friends, family, and the world on youtube\.?$/i.test(rawDescription.trim()) ? '' : rawDescription;
   const channel=data.author||data.uploader||data.author_name||'';
   const views=data.viewCount??data.views??data.view_count??null;
   const published=data.published??data.uploaded??data.uploadedDate??data.publishedAt??null;
