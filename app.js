@@ -933,7 +933,7 @@ async function getInfo(id) {
   }
 
   if (googleInfo && hasRealDescription(googleInfo.description)) return googleInfo;
-  throw browserError || serverError || new Error('Could not load this video description. Please try again.');
+  throw serverError || browserError || new Error('Could not load this video description. Please try again.');
 }
 function hasRealDescription(value) {
   const text = String(value || '').trim();
