@@ -280,3 +280,18 @@ body.theater .more,body.theater .box{margin-left:16px;margin-right:16px}
   .search{order:1;flex-basis:100%;max-width:none}
   .header-extension{order:0;margin-left:auto}
 }
+
+
+/* ---------- one-step previous video ---------- */
+.search button[type="submit"]{border-radius:0;padding-left:16px;padding-right:16px}
+.search .previous-url{
+  width:42px;flex:none;display:inline-flex;align-items:center;justify-content:center;
+  padding:7px 9px;border-left:0;border-radius:0 18px 18px 0;cursor:pointer;
+}
+.search .previous-url svg{
+  width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round;display:block;
+}
+.search .previous-url:disabled{opacity:.4;cursor:not-allowed}
+.search .previous-url:not(:disabled):hover{background:#303030;color:#fff}
+.search .previous-url:focus-visible{outline:2px solid #7db4ff;outline-offset:2px}
