@@ -6,7 +6,7 @@
  * ------------------------------------------------------------------ */
 const $ = id => document.getElementById(id);
 const els = {
-  form: $('urlForm'), input: $('urlInput'), empty: $('empty'), stage: $('stage'),
+  form: $('urlForm'), input: $('urlInput'), previous: $('btnPreviousUrl'), empty: $('empty'), stage: $('stage'),
   player: $('player'), shield: $('shield'), msg: $('msg'), pipBack: $('pipBack'),
   seek: $('seek'), play: $('btnPlay'), prev: $('btnPrev'), next: $('btnNext'),
   mute: $('btnMute'), vol: $('vol'), time: $('time'), speed: $('speed'),
@@ -88,6 +88,22 @@ function parseYouTube(input) {
   const hashT = (u.hash.match(/t=([^&]+)/) || [])[1];
   const start = parseTime(u.searchParams.get('t') || u.searchParams.get('start') || hashT);
   return { id, list: id ? null : list, start };   // a video id wins over a playlist id
+}
+
+// Compare the actual YouTube target, not the exact pasted URL. Different
+// URL formats for the same video should not create a useless Previous entry.
+function sameYouTubeTarget(a, b) {
+  const left = parseYouTube(a);
+  const right = parseYouTube(b);
+  return !!left && !!right && left.id === right.id && left.list === right.list;
+}
+
+function syncPreviousButton() {
+  const previousUrl = store.get('previousUrl', '');
+  const available = !!previousUrl;
+  els.previous.disabled = !available;
+  els.previous.title = available ? 'Play previous video (one-time)' : 'No previous video yet';
+  els.previous.setAttribute('aria-label', available ? 'Play previous video' : 'No previous video available');
 }
 
 /* ------------------------------------------------------------------ *
@@ -175,14 +191,24 @@ function resumePoint(info) {
 /* ------------------------------------------------------------------ *
  *  Load / play a link
  * ------------------------------------------------------------------ */
-async function play(raw) {
+async function play(raw, options = {}) {
   const info = parseYouTube(raw);
   if (!info) { toast('That does not look like a YouTube link.'); return; }
+
+  // Keep only the immediately previous URL. Restoring it consumes the entry,
+  // so the button cannot toggle endlessly between two videos.
+  const currentUrl = store.get('url', '');
+  if (options.fromPrevious) {
+    store.set('previousUrl', '');
+  } else if (currentUrl && !sameYouTubeTarget(currentUrl, raw)) {
+    store.set('previousUrl', currentUrl);
+  }
 
   endPip(false);
   current = info;
   syncSave();
   store.set('url', raw.trim());
+  syncPreviousButton();
   syncAddressBar(info);
 
   els.empty.hidden = true;
@@ -227,6 +253,21 @@ async function play(raw) {
 function loadInto(info) {
   if (info.id) player.loadVideoById({ videoId: info.id, startSeconds: info.start });
   else player.loadPlaylist({ list: info.list, listType: 'playlist' });
+}
+
+function playPrevious() {
+  const previousUrl = store.get('previousUrl', '');
+  if (!previousUrl) {
+    syncPreviousButton();
+    return;
+  }
+
+  // The previous URL is one-use: clear it before starting playback.
+  store.set('previousUrl', '');
+  syncPreviousButton();
+  els.input.value = previousUrl;
+  queue = null;
+  play(previousUrl, { fromPrevious: true });
 }
 
 function syncAddressBar(info) {
@@ -1767,6 +1808,7 @@ window.addEventListener('storage', e => {
 
 els.form.addEventListener('submit', e => { e.preventDefault(); queue = null; play(els.input.value); });
 els.input.addEventListener('paste', () => setTimeout(() => { queue = null; play(els.input.value); }, 0));
+els.previous.addEventListener('click', playPrevious);
 
 els.play.addEventListener('click', toggle);
 els.prev.addEventListener('click', () => ready && player.previousVideo());
@@ -1878,6 +1920,7 @@ document.addEventListener('keydown', e => {
   setIcon(els.theater, 'theater');
   els.loop.classList.toggle('active', loop);
   els.vol.value = muted ? 0 : volume;
+  syncPreviousButton();
   renderLibrary();
 
   buildSpeeds();
