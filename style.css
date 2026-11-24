@@ -313,3 +313,31 @@ body.theater .more,body.theater .box{margin-left:16px;margin-right:16px}
 
 /* Raise only the Play label slightly without moving the search button. */
 .search button[type="submit"] span{position:relative;top:-1px}
+
+
+/* Compact Help control beside the extension download. */
+.header-help{position:relative;flex:none;color:var(--mut);font-size:12px}
+.header-help>summary{
+  list-style:none;display:inline-flex;align-items:center;justify-content:center;gap:4px;
+  padding:8px 9px;border:1px solid #454545;border-radius:18px;background:#202020;
+  color:#f1f1f1;cursor:pointer;font-weight:600;white-space:nowrap;
+}
+.header-help>summary::-webkit-details-marker{display:none}
+.header-help>summary:hover{background:#303030;border-color:#666}
+.header-help>summary svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.help-panel{
+  position:absolute;right:0;top:calc(100% + 10px);z-index:30;
+  width:min(360px,calc(100vw - 24px));max-height:min(75vh,620px);overflow:auto;
+  padding:14px;background:#1c1c1c;border:1px solid #454545;border-radius:10px;
+  box-shadow:0 10px 32px rgba(0,0,0,.5);color:var(--fg);font-size:12px;line-height:1.5;
+}
+.help-panel strong{display:block;font-size:13px;margin:0 0 5px}
+.help-panel ul,.help-panel ol{margin:0 0 12px;padding-left:20px}
+.help-panel li{margin:4px 0}
+.help-panel code{background:#111;padding:2px 4px;border-radius:3px;overflow-wrap:anywhere}
+.help-note{margin:0;color:var(--mut)}
+.header-help[open]>summary{border-color:#666;color:#fff}
+@media(max-width:640px){
+  .header-help{order:0}
+  .help-panel{right:0}
+}
