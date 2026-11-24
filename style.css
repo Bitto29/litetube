@@ -304,3 +304,8 @@ body.theater .more,body.theater .box{margin-left:16px;margin-right:16px}
 }
 .search input{order:1;border-radius:0;border-right:0}
 .search button[type="submit"]{order:2;border-radius:0 18px 18px 0}
+
+
+/* Fine-tune the two search controls toward the input field. */
+.search .previous-url svg{transform:translateX(2px)}
+.search button[type="submit"]{padding-left:14px;padding-right:18px}
