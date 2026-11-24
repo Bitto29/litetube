@@ -295,3 +295,12 @@ body.theater .more,body.theater .box{margin-left:16px;margin-right:16px}
 .search .previous-url:disabled{opacity:.4;cursor:not-allowed}
 .search .previous-url:not(:disabled):hover{background:#303030;color:#fff}
 .search .previous-url:focus-visible{outline:2px solid #7db4ff;outline-offset:2px}
+
+
+/* Previous video control sits at the left edge of the search field. */
+.search .previous-url{
+  order:0;border:1px solid var(--bd);border-right:0;
+  border-radius:18px 0 0 18px;
+}
+.search input{order:1;border-radius:0;border-right:0}
+.search button[type="submit"]{order:2;border-radius:0 18px 18px 0}
