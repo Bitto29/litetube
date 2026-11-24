@@ -1870,19 +1870,23 @@ els.shield.addEventListener('click', e => {
   }, 300);
 });
 
-// Keyboard
+// Keyboard shortcuts
 document.addEventListener('keydown', e => {
   if (!ready || e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target;
-  if (t.tagName === 'SELECT' || (t.tagName === 'INPUT' && t.type === 'text')) return;
+  const tag = t && t.tagName;
+  if (tag === 'SELECT' || tag === 'TEXTAREA' ||
+      (tag === 'INPUT') || (t && t.isContentEditable)) return;
 
   const k = e.key;
   let handled = true;
   switch (k) {
     case ' ':
-      if (t.tagName === 'BUTTON') { handled = false; break; }
+      if (tag === 'BUTTON') { handled = false; break; }
       toggle(); break;
     case 'k': case 'K': toggle(); break;
+    case 'd': case 'D': togglePanel(D, loadDesc); break;
+    case 'c': case 'C': togglePanel(C, () => loadComments(true)); break;
     case 'ArrowLeft': seekBy(-5); break;
     case 'ArrowRight': seekBy(5); break;
     case 'j': case 'J': seekBy(-10); break;
@@ -1902,8 +1906,12 @@ document.addEventListener('keydown', e => {
     case 'Home': seekTo(0); break;
     case 'End': seekTo((player.getDuration() || 0) - 1); break;
     default:
-      if (/^[0-9]$/.test(k)) seekTo((player.getDuration() || 0) * (+k) / 10);
-      else handled = false;
+      if (/^[1-4]$/.test(k)) {
+        setSpeed(Number(k));
+        toast('Speed ' + k + 'x');
+      } else if (/^[0-9]$/.test(k)) {
+        seekTo((player.getDuration() || 0) * (+k) / 10);
+      } else handled = false;
   }
   if (handled) { e.preventDefault(); wake(); }
 });
