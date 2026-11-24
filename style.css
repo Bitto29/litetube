@@ -309,3 +309,7 @@ body.theater .more,body.theater .box{margin-left:16px;margin-right:16px}
 /* Fine-tune the two search controls toward the input field. */
 .search .previous-url svg{transform:translateX(2px)}
 .search button[type="submit"]{padding-left:14px;padding-right:18px}
+
+
+/* Raise only the Play label slightly without moving the search button. */
+.search button[type="submit"] span{position:relative;top:-1px}
