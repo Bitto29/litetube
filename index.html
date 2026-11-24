@@ -55,17 +55,13 @@
 }
 </script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23ff0033'/%3E%3Cpath d='M9 6.5v11l9-5.5z' fill='%23fff'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="style.css?v=20261123-1">
+<link rel="stylesheet" href="style.css?v=20261124-1">
 </head>
 <body>
 
 <header>
   <a class="logo" href="./">LiteTube</a>
   <form id="urlForm" class="search" autocomplete="off">
-    <input id="urlInput" type="text" inputmode="url" spellcheck="false"
-           placeholder="Paste a YouTube link (watch, youtu.be, shorts, live, playlist)"
-           aria-label="YouTube link">
-    <button type="submit">Play</button>
     <button id="btnPreviousUrl" class="previous-url" type="button"
             title="No previous video yet" aria-label="Play previous video" disabled>
       <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -74,6 +70,10 @@
         <path d="M12 7v5l3 2"></path>
       </svg>
     </button>
+    <input id="urlInput" type="text" inputmode="url" spellcheck="false"
+           placeholder="Paste a YouTube link (watch, youtu.be, shorts, live, playlist)"
+           aria-label="YouTube link">
+    <button type="submit">Play</button>
   </form>
   <a class="header-extension" href="/api/extension-download" title="Download LiteTube Speed Bridge">↓ Extension</a>
 </header>
@@ -187,6 +187,6 @@
 <div id="toast" class="toast" role="status" hidden></div>
 
 <noscript><p class="warn" style="padding:16px">JavaScript is required.</p></noscript>
-<script src="app.js?v=20261123-1" defer></script>
+<script src="app.js?v=20261124-1" defer></script>
 </body>
 </html>
