@@ -1878,6 +1878,15 @@ document.addEventListener('keydown', e => {
   if (tag === 'SELECT' || tag === 'TEXTAREA' ||
       (tag === 'INPUT') || (t && t.isContentEditable)) return;
 
+  // Shift + number seeks to the matching 10% position (0-90%).
+  const digitCode = e.code.match(/^(?:Digit|Numpad)([0-9])$/);
+  if (e.shiftKey && digitCode) {
+    seekTo((player.getDuration() || 0) * Number(digitCode[1]) / 10);
+    e.preventDefault();
+    wake();
+    return;
+  }
+
   const k = e.key;
   let handled = true;
   switch (k) {
@@ -1909,8 +1918,6 @@ document.addEventListener('keydown', e => {
       if (/^[1-4]$/.test(k)) {
         setSpeed(Number(k));
         toast('Speed ' + k + 'x');
-      } else if (/^[0-9]$/.test(k)) {
-        seekTo((player.getDuration() || 0) * (+k) / 10);
       } else handled = false;
   }
   if (handled) { e.preventDefault(); wake(); }
