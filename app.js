@@ -195,6 +195,9 @@ async function play(raw, options = {}) {
   const info = parseYouTube(raw);
   if (!info) { toast('That does not look like a YouTube link.'); return; }
 
+  // Keep the pasted URL visible, but release keyboard focus so player shortcuts work.
+  if (document.activeElement === els.input) els.input.blur();
+
   // Keep only the immediately previous URL. Restoring it consumes the entry,
   // so the button cannot toggle endlessly between two videos.
   const currentUrl = store.get('url', '');
