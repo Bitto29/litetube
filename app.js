@@ -1810,6 +1810,7 @@ window.addEventListener('storage', e => {
 });
 
 els.form.addEventListener('submit', e => { e.preventDefault(); queue = null; play(els.input.value); });
+els.input.addEventListener('click', () => els.input.select());
 els.input.addEventListener('paste', () => setTimeout(() => { queue = null; play(els.input.value); }, 0));
 els.previous.addEventListener('click', playPrevious);
 
